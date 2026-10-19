@@ -5,14 +5,14 @@ plugins {
 
 android {
     namespace = "com.huaci.ai"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.huaci.ai"
         minSdk = 26          // 系统悬浮窗 TYPE_APPLICATION_OVERLAY 需要 Android 8.0+
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.2.1"
+        versionCode = 5
+        versionName = "1.3"
     }
 
     // 固定签名：每次编译出的新版本都能直接覆盖安装，不用先卸载旧版。
@@ -44,5 +44,7 @@ android {
     }
 }
 
-// 不依赖任何 AndroidX 库：只用系统自带的 View、HttpURLConnection 和 org.json，安装包很小。
-dependencies {}
+// 界面只用系统自带控件；文字识别用 Google ML Kit 的离线中文模型（不需要联网、不需要谷歌服务）。
+dependencies {
+    implementation("com.google.mlkit:text-recognition-chinese:16.0.1")
+}

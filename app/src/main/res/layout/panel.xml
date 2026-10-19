@@ -3,235 +3,327 @@
 <com.huaci.ai.PanelRoot xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/bg_panel"
-    android:orientation="vertical"
-    android:paddingStart="14dp"
-    android:paddingTop="6dp"
-    android:paddingEnd="14dp"
-    android:paddingBottom="12dp">
+    android:background="@drawable/bg_panel">
 
-    <!-- 标题栏：按住可拖动浮窗 -->
     <LinearLayout
-        android:id="@+id/header"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:paddingStart="12dp"
+        android:paddingTop="4dp"
+        android:paddingEnd="12dp"
+        android:paddingBottom="16dp">
 
-        <View
-            android:layout_width="36dp"
-            android:layout_height="4dp"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="2dp"
-            android:background="@drawable/bg_handle" />
+        <!-- 标题栏：按住拖动浮窗；长按后拖动 = 放大镜识字 -->
+        <LinearLayout
+            android:id="@+id/header"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical">
 
+            <View
+                android:layout_width="36dp"
+                android:layout_height="4dp"
+                android:layout_gravity="center_horizontal"
+                android:layout_marginTop="2dp"
+                android:background="@drawable/bg_handle" />
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:id="@+id/title"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:minWidth="0dp"
+                    android:text="@string/app_name"
+                    android:textColor="@color/ink"
+                    android:textSize="14sp"
+                    android:textStyle="bold" />
+
+                <!-- 窗口窄时按钮可以左右滑 -->
+                <HorizontalScrollView
+                    android:layout_width="wrap_content"
+                    android:layout_height="match_parent"
+                    android:overScrollMode="never"
+                    android:scrollbars="none">
+
+                    <LinearLayout
+                        android:layout_width="wrap_content"
+                        android:layout_height="match_parent"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <TextView
+                            android:id="@+id/btnShot"
+                            style="@style/PanelIconBtn"
+                            android:contentDescription="截取屏幕的一部分"
+                            android:text="截屏" />
+
+                        <TextView
+                            android:id="@+id/btnPaste"
+                            style="@style/PanelIconBtn"
+                            android:contentDescription="用剪贴板里的文字"
+                            android:text="粘贴" />
+
+                        <TextView
+                            android:id="@+id/btnAdjust"
+                            style="@style/PanelIconBtn"
+                            android:contentDescription="调节透明度和大小"
+                            android:text="调节" />
+
+                        <TextView
+                            android:id="@+id/btnMin"
+                            style="@style/PanelIconBtn"
+                            android:contentDescription="收起成悬浮球"
+                            android:text="—"
+                            android:textSize="16sp" />
+
+                        <TextView
+                            android:id="@+id/btnClose"
+                            style="@style/PanelIconBtn"
+                            android:contentDescription="关闭浮窗"
+                            android:text="✕"
+                            android:textSize="15sp" />
+                    </LinearLayout>
+                </HorizontalScrollView>
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- 调节：透明度、恢复默认大小（点「调节」显示） -->
+        <LinearLayout
+            android:id="@+id/adjustRow"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="6dp"
+            android:background="@drawable/bg_quote"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingStart="12dp"
+            android:paddingEnd="4dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/alphaLabel"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:minWidth="64dp"
+                android:text="不透明 100%"
+                android:textColor="@color/ink_soft"
+                android:textSize="12sp" />
+
+            <SeekBar
+                android:id="@+id/alphaSeek"
+                android:layout_width="0dp"
+                android:layout_height="40dp"
+                android:layout_weight="1"
+                android:max="75"
+                android:progressBackgroundTint="@color/line"
+                android:progressTint="@color/accent"
+                android:thumbTint="@color/accent" />
+
+            <TextView
+                android:id="@+id/btnResetSize"
+                style="@style/PanelIconBtn"
+                android:text="默认大小" />
+        </LinearLayout>
+
+        <!-- 中间整块可以滚动：窗口再矮也能看全 -->
+        <ScrollView
+            android:id="@+id/scroll"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:fadeScrollbars="true"
+            android:overScrollMode="ifContentScrolls">
+
+            <LinearLayout
+                android:id="@+id/body"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingBottom="4dp">
+
+                <!-- 截图缩略图：点一下放大/缩小，右上角 ✕ 移除 -->
+                <FrameLayout
+                    android:id="@+id/shotBox"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="6dp"
+                    android:background="@drawable/bg_quote"
+                    android:padding="6dp"
+                    android:visibility="gone">
+
+                    <ImageView
+                        android:id="@+id/shot"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:adjustViewBounds="true"
+                        android:contentDescription="截图"
+                        android:maxHeight="110dp"
+                        android:scaleType="fitCenter" />
+
+                    <TextView
+                        android:id="@+id/shotRemove"
+                        android:layout_width="28dp"
+                        android:layout_height="28dp"
+                        android:layout_gravity="top|end"
+                        android:background="@drawable/bg_chip"
+                        android:contentDescription="移除截图"
+                        android:gravity="center"
+                        android:text="✕"
+                        android:textColor="@color/ink"
+                        android:textSize="13sp" />
+                </FrameLayout>
+
+                <!-- 原文（选中/识别/粘贴的文字），点一下展开/收起 -->
+                <TextView
+                    android:id="@+id/quote"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/bg_quote"
+                    android:ellipsize="end"
+                    android:lineSpacingExtra="2dp"
+                    android:maxLines="3"
+                    android:paddingStart="12dp"
+                    android:paddingTop="8dp"
+                    android:paddingEnd="12dp"
+                    android:paddingBottom="8dp"
+                    android:textColor="@color/ink_soft"
+                    android:textSize="13sp" />
+
+                <!-- 预设问题 -->
+                <HorizontalScrollView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:overScrollMode="never"
+                    android:scrollbars="none">
+
+                    <LinearLayout
+                        android:id="@+id/chips"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal" />
+                </HorizontalScrollView>
+
+                <!-- 对话 -->
+                <LinearLayout
+                    android:id="@+id/thread"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="vertical" />
+
+                <TextView
+                    android:id="@+id/empty"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:gravity="center"
+                    android:lineSpacingExtra="4dp"
+                    android:paddingStart="12dp"
+                    android:paddingTop="16dp"
+                    android:paddingEnd="12dp"
+                    android:paddingBottom="16dp"
+                    android:text="点上面的预设问题，或在下面直接提问。\n长按标题栏再拖动浮窗，可以识别浮窗下面的文字。"
+                    android:textColor="@color/ink_soft"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </ScrollView>
+
+        <!-- 状态 + 操作 -->
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="40dp"
+            android:layout_height="32dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
             <TextView
+                android:id="@+id/status"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="@string/app_name"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/ink_soft"
+                android:textSize="12sp" />
+
+            <TextView
+                android:id="@+id/btnStop"
+                style="@style/PanelIconBtn"
+                android:text="停止"
+                android:textColor="@color/danger"
+                android:visibility="gone" />
+
+            <TextView
+                android:id="@+id/btnCopy"
+                style="@style/PanelIconBtn"
+                android:text="复制" />
+
+            <TextView
+                android:id="@+id/btnClear"
+                style="@style/PanelIconBtn"
+                android:text="清空" />
+        </LinearLayout>
+
+        <!-- 输入框 -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="bottom"
+            android:orientation="horizontal">
+
+            <EditText
+                android:id="@+id/input"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@drawable/bg_input"
+                android:hint="追问，或问点别的…"
+                android:inputType="textMultiLine"
+                android:maxLines="3"
+                android:minHeight="42dp"
+                android:paddingStart="14dp"
+                android:paddingTop="9dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="9dp"
                 android:textColor="@color/ink"
+                android:textColorHint="@color/ink_soft"
+                android:textSize="15sp" />
+
+            <TextView
+                android:id="@+id/btnSend"
+                android:layout_width="wrap_content"
+                android:layout_height="42dp"
+                android:layout_marginStart="8dp"
+                android:background="@drawable/bg_btn_accent"
+                android:gravity="center"
+                android:paddingStart="16dp"
+                android:paddingEnd="16dp"
+                android:text="发送"
+                android:textColor="@color/accent_ink"
                 android:textSize="15sp"
                 android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/btnShot"
-                style="@style/PanelIconBtn"
-                android:contentDescription="截取屏幕的一部分"
-                android:text="截屏" />
-
-            <TextView
-                android:id="@+id/btnPaste"
-                style="@style/PanelIconBtn"
-                android:contentDescription="用剪贴板里的文字"
-                android:text="粘贴" />
-
-            <TextView
-                android:id="@+id/btnMin"
-                style="@style/PanelIconBtn"
-                android:contentDescription="收起成悬浮球"
-                android:text="收起" />
-
-            <TextView
-                android:id="@+id/btnClose"
-                style="@style/PanelIconBtn"
-                android:contentDescription="关闭浮窗"
-                android:text="✕"
-                android:textSize="16sp" />
         </LinearLayout>
     </LinearLayout>
 
-    <!-- 截图缩略图：点一下放大/缩小，右上角 ✕ 移除 -->
-    <FrameLayout
-        android:id="@+id/shotBox"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginBottom="6dp"
-        android:background="@drawable/bg_quote"
-        android:padding="6dp"
-        android:visibility="gone">
-
-        <ImageView
-            android:id="@+id/shot"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:adjustViewBounds="true"
-            android:contentDescription="截图"
-            android:maxHeight="110dp"
-            android:scaleType="fitCenter" />
-
-        <TextView
-            android:id="@+id/shotRemove"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
-            android:layout_gravity="top|end"
-            android:background="@drawable/bg_chip"
-            android:contentDescription="移除截图"
-            android:gravity="center"
-            android:text="✕"
-            android:textColor="@color/ink"
-            android:textSize="13sp" />
-    </FrameLayout>
-
-    <!-- 选中的原文，点一下展开/收起 -->
+    <!-- 右下角：拖动改变浮窗大小 -->
     <TextView
-        android:id="@+id/quote"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:background="@drawable/bg_quote"
-        android:ellipsize="end"
-        android:lineSpacingExtra="2dp"
-        android:maxLines="3"
-        android:paddingStart="12dp"
-        android:paddingTop="8dp"
-        android:paddingEnd="12dp"
-        android:paddingBottom="8dp"
+        android:id="@+id/resize"
+        android:layout_width="30dp"
+        android:layout_height="22dp"
+        android:layout_gravity="bottom|end"
+        android:contentDescription="拖动改变浮窗大小"
+        android:gravity="bottom|end"
+        android:paddingEnd="8dp"
+        android:paddingBottom="3dp"
+        android:text="◢"
         android:textColor="@color/ink_soft"
-        android:textSize="13sp" />
-
-    <!-- 预设问题 -->
-    <HorizontalScrollView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="10dp"
-        android:overScrollMode="never"
-        android:scrollbars="none">
-
-        <LinearLayout
-            android:id="@+id/chips"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal" />
-    </HorizontalScrollView>
-
-    <!-- 对话 -->
-    <ScrollView
-        android:id="@+id/scroll"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_marginTop="10dp"
-        android:layout_weight="1"
-        android:fadeScrollbars="true"
-        android:overScrollMode="ifContentScrolls">
-
-        <LinearLayout
-            android:id="@+id/thread"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="vertical"
-            android:paddingBottom="4dp" />
-    </ScrollView>
-
-    <TextView
-        android:id="@+id/empty"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1"
-        android:gravity="center"
-        android:lineSpacingExtra="4dp"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp"
-        android:text="点上面的预设问题，\n或在下面直接提问"
-        android:textColor="@color/ink_soft"
-        android:textSize="13sp" />
-
-    <!-- 状态 + 操作 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="34dp"
-        android:gravity="center_vertical"
-        android:orientation="horizontal">
-
-        <TextView
-            android:id="@+id/status"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:ellipsize="end"
-            android:maxLines="1"
-            android:textColor="@color/ink_soft"
-            android:textSize="12sp" />
-
-        <TextView
-            android:id="@+id/btnStop"
-            style="@style/PanelIconBtn"
-            android:text="停止"
-            android:textColor="@color/danger"
-            android:visibility="gone" />
-
-        <TextView
-            android:id="@+id/btnCopy"
-            style="@style/PanelIconBtn"
-            android:text="复制回答" />
-
-        <TextView
-            android:id="@+id/btnClear"
-            style="@style/PanelIconBtn"
-            android:text="清空" />
-    </LinearLayout>
-
-    <!-- 输入框 -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:gravity="bottom"
-        android:orientation="horizontal">
-
-        <EditText
-            android:id="@+id/input"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:background="@drawable/bg_input"
-            android:hint="追问，或问点别的…"
-            android:inputType="textMultiLine"
-            android:maxLines="4"
-            android:minHeight="44dp"
-            android:paddingStart="14dp"
-            android:paddingTop="10dp"
-            android:paddingEnd="14dp"
-            android:paddingBottom="10dp"
-            android:textColor="@color/ink"
-            android:textColorHint="@color/ink_soft"
-            android:textSize="15sp" />
-
-        <TextView
-            android:id="@+id/btnSend"
-            android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:layout_marginStart="8dp"
-            android:background="@drawable/bg_btn_accent"
-            android:gravity="center"
-            android:paddingStart="18dp"
-            android:paddingEnd="18dp"
-            android:text="发送"
-            android:textColor="@color/accent_ink"
-            android:textSize="15sp"
-            android:textStyle="bold" />
-    </LinearLayout>
+        android:textSize="11sp" />
 </com.huaci.ai.PanelRoot>

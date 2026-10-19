@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 放大镜取景框：只有一圈描边，中间透明，能看到下面的文字 -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <corners android:radius="14dp" />
+    <solid android:color="#14000000" />
+    <stroke android:width="3dp" android:color="@color/accent" android:dashWidth="10dp" android:dashGap="6dp" />
+</shape>

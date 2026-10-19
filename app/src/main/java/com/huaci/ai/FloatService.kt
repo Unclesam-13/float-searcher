@@ -11,7 +11,9 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.content.res.Configuration
 import android.graphics.Bitmap
+import android.graphics.Rect
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.Icon
@@ -32,6 +34,11 @@ import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
+import android.widget.SeekBar
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.text.Text
+import com.google.mlkit.vision.text.TextRecognition
+import com.google.mlkit.vision.text.chinese.ChineseTextRecognizerOptions
 import android.widget.TextView
 import android.widget.Toast
 import java.io.ByteArrayOutputStream
@@ -90,6 +97,19 @@ class FloatService : Service() {
     private lateinit var btnStop: TextView
     private lateinit var input: EditText
     private lateinit var shotBox: View
+    private lateinit var body: LinearLayout
+    private lateinit var content: View
+    private lateinit var resizeGrip: View
+    private lateinit var scanHint: TextView
+    private var typingRestoreH = 0
+    private var typingRestoreY = 0
+
+    // 放大镜识字
+    private var scanMode = false
+    private var scanRect: Rect? = null
+    private val recognizer by lazy {
+        TextRecognition.getClient(ChineseTextRecognizerOptions.Builder().build())
+    }
     private lateinit var shotView: ImageView
 
     // 截屏
@@ -153,12 +173,33 @@ class FloatService : Service() {
         return START_STICKY
     }
 
+    /** 横竖屏切换：浮窗换成该方向记住的大小，悬浮球留在屏幕内 */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val p = panel
+        val lp = panelLp
+        if (p != null && lp != null) {
+            if (panelFocusable) setPanelFocusable(false)
+            applySavedPanelGeometry(lp, resetPosition = true)
+            safeUpdate(p, lp)
+        }
+        val b = bubble
+        val blp = bubbleLp
+        if (b != null && blp != null) {
+            val size = dp(50)
+            blp.x = if (blp.x + size / 2 < screenW() / 2) dp(6) else screenW() - size - dp(6)
+            blp.y = blp.y.coerceIn(0, (screenH() - size).coerceAtLeast(0))
+            safeUpdate(b, blp)
+        }
+    }
+
     override fun onDestroy() {
         running = false
         ai.cancel()
         consentToken++
         cropOverlay?.dismiss(); cropOverlay = null
         capture.release()
+        try { recognizer.close() } catch (_: Exception) {}
         removeSafely(panel, panelShown); panelShown = false
         removeSafely(bubble, bubbleShown); bubbleShown = false
         super.onDestroy()
@@ -349,11 +390,60 @@ class FloatService : Service() {
         input = root.findViewById(R.id.input)
         shotBox = root.findViewById(R.id.shotBox)
         shotView = root.findViewById(R.id.shot)
-
-        panelLp = overlayParams(screenW() - dp(20), panelHeight(false), focusable = false).apply {
-            x = dp(10)
-            y = statusBarH() + dp(6)
+        body = root.findViewById(R.id.body)
+        content = root.getChildAt(0)
+        resizeGrip = root.findViewById(R.id.resize)
+        scanHint = TextView(ui).apply {
+            text = "松手识别框里的文字"
+            setTextColor(getColor(R.color.accent_ink))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            background = getDrawable(R.drawable.bg_btn_accent)
+            setPadding(dp(12), dp(6), dp(12), dp(6))
+            visibility = View.GONE
         }
+        root.addView(scanHint, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        ).apply { topMargin = dp(6) })
+
+        panelLp = overlayParams(dp(300), dp(300), focusable = false).also {
+            applySavedPanelGeometry(it, resetPosition = true)
+            it.alpha = Prefs.panelAlpha(this)
+        }
+
+        // 调节：透明度 + 默认大小
+        val adjustRow = root.findViewById<View>(R.id.adjustRow)
+        val alphaSeek = root.findViewById<SeekBar>(R.id.alphaSeek)
+        val alphaLabel = root.findViewById<TextView>(R.id.alphaLabel)
+        fun showAlpha(a: Float) { alphaLabel.text = "透明度 ${((1f - a) * 100).roundToInt()}%" }
+        val a0 = Prefs.panelAlpha(this)
+        alphaSeek.progress = ((1f - a0) * 100).roundToInt()
+        showAlpha(a0)
+        alphaSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
+                val a = 1f - progress / 100f
+                showAlpha(a)
+                val lp = panelLp ?: return
+                lp.alpha = a
+                safeUpdate(panel, lp)
+            }
+            override fun onStartTrackingTouch(sb: SeekBar) {}
+            override fun onStopTrackingTouch(sb: SeekBar) {
+                Prefs.savePanelAlpha(this@FloatService, 1f - sb.progress / 100f)
+            }
+        })
+        root.findViewById<View>(R.id.btnAdjust).setOnClickListener {
+            adjustRow.visibility = if (adjustRow.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+        }
+        root.findViewById<View>(R.id.btnResetSize).setOnClickListener {
+            val lp = panelLp ?: return@setOnClickListener
+            if (panelFocusable) setPanelFocusable(false)
+            Prefs.savePanelSize(this, isLandscape(), 0, 0)
+            applySavedPanelGeometry(lp, resetPosition = true)
+            safeUpdate(panel, lp)
+        }
+        attachResize(resizeGrip)
 
         root.onBack = { if (panelFocusable) setPanelFocusable(false) else minimizePanel() }
         root.onOutsideTouch = { if (panelFocusable) setPanelFocusable(false) }
@@ -389,21 +479,184 @@ class FloatService : Service() {
         updateEmpty()
     }
 
+    /**
+     * 按住标题栏拖动 = 移动浮窗。
+     * 长按标题栏（不动约半秒）后再拖 = 放大镜：浮窗变成取景框，松手识别框里的文字。
+     */
     private fun attachPanelDrag(header: View) {
-        var downY = 0f; var downX = 0f; var startY = 0; var startX = 0
+        val slop = ViewConfiguration.get(this).scaledTouchSlop
+        var downY = 0f; var downX = 0f; var startY = 0; var startX = 0; var moved = false
+        val longPress = Runnable {
+            if (!moved) {
+                header.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+                enterScanMode()
+            }
+        }
         header.setOnTouchListener { _, e ->
             val lp = panelLp ?: return@setOnTouchListener false
             when (e.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { downX = e.rawX; downY = e.rawY; startX = lp.x; startY = lp.y }
+                MotionEvent.ACTION_DOWN -> {
+                    downX = e.rawX; downY = e.rawY; startX = lp.x; startY = lp.y; moved = false
+                    header.postDelayed(longPress, 450)
+                }
                 MotionEvent.ACTION_MOVE -> {
-                    lp.x = (startX + (e.rawX - downX).toInt()).coerceIn(-lp.width / 2, screenW() - lp.width / 2)
-                    lp.y = (startY + (e.rawY - downY).toInt()).coerceIn(0, screenH() - dp(120))
-                    safeUpdate(panel, lp)
+                    val dx = e.rawX - downX; val dy = e.rawY - downY
+                    if (!moved && (abs(dx) > slop || abs(dy) > slop)) {
+                        moved = true
+                        header.removeCallbacks(longPress)
+                    }
+                    if (moved || scanMode) {
+                        lp.x = (startX + dx.toInt()).coerceIn(-lp.width / 2, screenW() - lp.width / 2)
+                        lp.y = (startY + dy.toInt()).coerceIn(0, (screenH() - dp(60)).coerceAtLeast(0))
+                        safeUpdate(panel, lp)
+                    }
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    header.removeCallbacks(longPress)
+                    if (scanMode) {
+                        if (e.actionMasked == MotionEvent.ACTION_UP) startScan() else exitScanMode()
+                    }
                 }
             }
             true
         }
     }
+
+    /** 右下角拖动改大小，松手后记住（横竖屏分开记） */
+    private fun attachResize(grip: View) {
+        var downX = 0f; var downY = 0f; var startW = 0; var startH = 0
+        grip.setOnTouchListener { _, e ->
+            val lp = panelLp ?: return@setOnTouchListener false
+            when (e.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    if (panelFocusable) setPanelFocusable(false)
+                    downX = e.rawX; downY = e.rawY; startW = lp.width; startH = lp.height
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    lp.width = (startW + (e.rawX - downX).toInt())
+                        .coerceIn(minPanelW(), (screenW() - lp.x).coerceAtLeast(minPanelW()))
+                    lp.height = (startH + (e.rawY - downY).toInt())
+                        .coerceIn(minPanelH(), (screenH() - lp.y).coerceAtLeast(minPanelH()))
+                    safeUpdate(panel, lp)
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL ->
+                    Prefs.savePanelSize(this, isLandscape(), lp.width, lp.height)
+            }
+            true
+        }
+    }
+
+    // ---------- 浮窗尺寸 ----------
+
+    private fun isLandscape() = screenW() > screenH()
+    private fun minPanelW() = min(dp(240), screenW())
+    private fun minPanelH() = min(dp(190), screenH())
+
+    private fun defaultPanelSize(): Pair<Int, Int> =
+        if (isLandscape()) (screenW() * 0.48f).toInt().coerceAtLeast(dp(300)) to
+            (screenH() - statusBarH() - dp(16))
+        else (screenW() - dp(20)) to (screenH() * 0.55f).toInt()
+
+    /** 用记住的（或默认）大小，并保证整个浮窗都在屏幕里 */
+    private fun applySavedPanelGeometry(lp: WindowManager.LayoutParams, resetPosition: Boolean) {
+        val (sw, sh) = Prefs.panelSize(this, isLandscape())
+        val (dw, dh) = defaultPanelSize()
+        lp.width = (if (sw > 0) sw else dw).coerceIn(minPanelW(), screenW())
+        lp.height = (if (sh > 0) sh else dh).coerceIn(minPanelH(), screenH())
+        if (resetPosition) {
+            if (isLandscape()) { lp.x = screenW() - lp.width - dp(10); lp.y = dp(8) }
+            else { lp.x = dp(10); lp.y = statusBarH() + dp(6) }
+        }
+        lp.x = lp.x.coerceIn(0, (screenW() - lp.width).coerceAtLeast(0))
+        lp.y = lp.y.coerceIn(0, (screenH() - lp.height).coerceAtLeast(0))
+    }
+
+    // ---------- 放大镜识字 ----------
+
+    private fun enterScanMode() {
+        val p = panel ?: return
+        val lp = panelLp ?: return
+        if (panelFocusable) setPanelFocusable(false)
+        scanMode = true
+        content.visibility = View.INVISIBLE
+        resizeGrip.visibility = View.INVISIBLE
+        scanHint.visibility = View.VISIBLE
+        p.background = getDrawable(R.drawable.bg_scan_frame)
+        lp.alpha = 1f
+        safeUpdate(p, lp)
+    }
+
+    private fun exitScanMode() {
+        if (!scanMode) return
+        scanMode = false
+        val p = panel ?: return
+        content.visibility = View.VISIBLE
+        resizeGrip.visibility = View.VISIBLE
+        scanHint.visibility = View.GONE
+        p.background = getDrawable(R.drawable.bg_panel)
+        val lp = panelLp ?: return
+        lp.alpha = Prefs.panelAlpha(this)
+        safeUpdate(p, lp)
+    }
+
+    /** 记下浮窗在屏幕上的位置，移走浮窗后截屏，只识别这块区域的文字 */
+    private fun startScan() {
+        val p = panel ?: return exitScanMode()
+        val loc = IntArray(2)
+        p.getLocationOnScreen(loc)
+        val r = Rect(loc[0], loc[1], loc[0] + p.width, loc[1] + p.height)
+        exitScanMode()
+        startCapture(scan = r)
+    }
+
+    private fun recognizeText(shot: Bitmap, r: Rect) {
+        val l = r.left.coerceIn(0, shot.width - 1)
+        val t = r.top.coerceIn(0, shot.height - 1)
+        val rr = r.right.coerceIn(l + 1, shot.width)
+        val bb = r.bottom.coerceIn(t + 1, shot.height)
+        val part = try { Bitmap.createBitmap(shot, l, t, rr - l, bb - t) } catch (_: Exception) { null }
+        if (part == null) {
+            toast("识别失败，请再试一次")
+            restoreAfterCapture()
+            return
+        }
+        recognizer.process(InputImage.fromBitmap(part, 0))
+            .addOnSuccessListener { result ->
+                if (!running) return@addOnSuccessListener
+                val text = joinRecognized(result)
+                if (text.isBlank()) {
+                    toast("框里没识别到文字，把浮窗挪到文字上再试")
+                    restoreAfterCapture()
+                } else {
+                    capturing = false
+                    openPanel(text) // 和划词一样：放进原文，可点预设或追问
+                }
+            }
+            .addOnFailureListener {
+                if (!running) return@addOnFailureListener
+                toast("识别失败：${it.message ?: "未知错误"}")
+                restoreAfterCapture()
+            }
+    }
+
+    /** 中文行与行之间直接相连，英文行之间加空格；段落之间换行 */
+    private fun joinRecognized(t: Text): String =
+        t.textBlocks.joinToString("\n") { block ->
+            val sb = StringBuilder()
+            block.lines.forEach { line ->
+                val s = line.text.trim()
+                if (s.isEmpty()) return@forEach
+                if (sb.isNotEmpty()) {
+                    val prev = sb[sb.length - 1]
+                    if (!(isCjk(prev) || isCjk(s[0]))) sb.append(' ')
+                }
+                sb.append(s)
+            }
+            sb.toString()
+        }.trim()
+
+    private fun isCjk(c: Char) = Character.UnicodeScript.of(c.code) == Character.UnicodeScript.HAN ||
+        c in '\u3000'..'\u303F' || c in '\uFF00'..'\uFFEF'
 
     /** 浮窗默认不抢焦点（不影响下面的 App）；点输入框时才拿焦点、弹键盘。 */
     private fun setPanelFocusable(focusable: Boolean) {
@@ -411,7 +664,17 @@ class FloatService : Service() {
         if (panelFocusable == focusable) return
         panelFocusable = focusable
         lp.flags = overlayFlags(focusable)
-        lp.height = panelHeight(focusable)
+        if (focusable) {
+            // 打字时（竖屏）让出下半屏给键盘
+            typingRestoreH = lp.height; typingRestoreY = lp.y
+            if (!isLandscape()) {
+                lp.height = min(lp.height, (screenH() * 0.46f).toInt()).coerceAtLeast(minPanelH())
+                lp.y = min(lp.y, statusBarH() + dp(6))
+            }
+        } else if (typingRestoreH > 0) {
+            lp.height = typingRestoreH; lp.y = typingRestoreY
+            typingRestoreH = 0
+        }
         safeUpdate(panel, lp)
         val imm = getSystemService(InputMethodManager::class.java)
         if (focusable) {
@@ -471,9 +734,10 @@ class FloatService : Service() {
     // ================= 截屏 =================
 
     /** 收起浮窗 → （首次需授权）→ 定格画面 → 选框。 */
-    private fun startCapture() {
+    private fun startCapture(scan: Rect? = null) {
         if (capturing) return
         capturing = true
+        scanRect = scan
         panelWasOpen = panelShown
         if (!capture.active) {
             // 先拉起授权页，再移走悬浮窗（悬浮窗可见时才允许从后台打开页面）
@@ -552,6 +816,12 @@ class FloatService : Service() {
                 restoreAfterCapture()
                 return@grab
             }
+            val r = scanRect
+            if (r != null) {
+                scanRect = null
+                recognizeText(bmp, r)
+                return@grab
+            }
             cropOverlay = CropOverlay(ui, wm, bmp) { result ->
                 cropOverlay = null
                 if (running) {
@@ -564,6 +834,7 @@ class FloatService : Service() {
     private fun restoreAfterCapture() {
         if (!running) return
         capturing = false
+        scanRect = null
         if (panelWasOpen) openPanel(null) else showBubble()
     }
 
@@ -669,11 +940,11 @@ class FloatService : Service() {
         ai.stream(
             history.toList(),
             onDelta = { piece ->
-                val nearBottom = scroll.scrollY + scroll.height >= thread.height - dp(48)
+                val nearBottom = scroll.scrollY + scroll.height >= body.height - dp(48)
                 answer.append(piece)
                 av.text = Md.render(answer.toString())
                 status.text = "正在回答…"
-                if (nearBottom) scroll.post { scroll.scrollTo(0, thread.height) }
+                if (nearBottom) scroll.post { scroll.scrollTo(0, body.height) }
             },
             onDone = { finishAnswer(null, stopped = false) },
             onError = { msg -> finishAnswer(msg, stopped = false) },
@@ -706,7 +977,7 @@ class FloatService : Service() {
             }
             else -> status.text = ""
         }
-        scroll.post { scroll.scrollTo(0, thread.height) }
+        scroll.post { scroll.scrollTo(0, body.height) }
     }
 
     private fun addUserBubble(text: String) {
@@ -753,7 +1024,6 @@ class FloatService : Service() {
 
     private fun updateEmpty() {
         val has = thread.childCount > 0
-        scroll.visibility = if (has) View.VISIBLE else View.GONE
         empty.visibility = if (has) View.GONE else View.VISIBLE
     }
 
@@ -789,10 +1059,6 @@ class FloatService : Service() {
             gravity = Gravity.TOP or Gravity.START
             softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
         }
-
-    /** 打字时浮窗变矮，给键盘让出下半屏。 */
-    private fun panelHeight(typing: Boolean) =
-        (screenH() * if (typing) 0.46f else 0.62f).toInt()
 
     /** 悬浮窗权限在运行中被关掉时，addView 会抛异常：提示并退出，而不是崩溃。 */
     private fun addWindow(v: View, lp: WindowManager.LayoutParams): Boolean {

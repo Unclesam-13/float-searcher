@@ -4,12 +4,12 @@ import android.content.Context
 import android.util.AttributeSet
 import android.view.KeyEvent
 import android.view.MotionEvent
-import android.widget.LinearLayout
+import android.widget.FrameLayout
 
 /** 浮窗的根布局：拦截返回键和「点到浮窗外面」，交给 FloatService 处理。 */
 class PanelRoot @JvmOverloads constructor(
     context: Context, attrs: AttributeSet? = null
-) : LinearLayout(context, attrs) {
+) : FrameLayout(context, attrs) {
 
     var onBack: (() -> Unit)? = null
     var onOutsideTouch: (() -> Unit)? = null

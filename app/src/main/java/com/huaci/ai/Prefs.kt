@@ -51,6 +51,21 @@ object Prefs {
             .apply()
     }
 
+    /** 浮窗大小：横屏、竖屏分别记住；0 表示用默认值 */
+    fun panelSize(c: Context, landscape: Boolean): Pair<Int, Int> {
+        val k = if (landscape) "L" else "P"
+        return sp(c).getInt("pw$k", 0) to sp(c).getInt("ph$k", 0)
+    }
+
+    fun savePanelSize(c: Context, landscape: Boolean, w: Int, h: Int) {
+        val k = if (landscape) "L" else "P"
+        sp(c).edit().putInt("pw$k", w).putInt("ph$k", h).apply()
+    }
+
+    /** 浮窗不透明度 0.25 ~ 1.0 */
+    fun panelAlpha(c: Context): Float = sp(c).getFloat("alpha", 1f).coerceIn(0.25f, 1f)
+    fun savePanelAlpha(c: Context, a: Float) { sp(c).edit().putFloat("alpha", a).apply() }
+
     fun bubblePos(c: Context): Pair<Int, Int> =
         sp(c).getInt("bx", -1) to sp(c).getInt("by", -1)
 
