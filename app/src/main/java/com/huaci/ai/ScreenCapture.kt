@@ -12,15 +12,16 @@ import android.media.projection.MediaProjection
 import android.media.projection.MediaProjectionManager
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.view.Display
 
 /**
- * 用系统的「屏幕投射」接口（MediaProjection）抓取一帧屏幕。
+ * 用系统的「屏幕投射」接口（MediaProjection）取屏幕画面。
  *
- * - 授权一次后保持一段时间，期间再截屏不用重复确认；闲置后自动释放。
- * - 平时虚拟屏幕不接画面（surface = null），不耗电；只在截屏那一刻接上，
- *   接上会强制系统输出一帧最新画面，等画面稳定后取最后一帧。
+ * 授权后虚拟屏幕一直接着 ImageReader，持续收下最新一帧（画面不变时系统不会出新帧，几乎不耗电）。
+ * 截屏时只取「悬浮窗移走之后」到达的那一帧，保证截图里没有自己的浮窗。
+ * 闲置一段时间自动释放授权。
  */
 class ScreenCapture(
     private val ctx: Context,
@@ -33,9 +34,12 @@ class ScreenCapture(
     private var readerW = 0
     private var readerH = 0
 
-    // 正在进行的一次截屏
-    private var pending: ((Bitmap?) -> Unit)? = null
+    // 最新收到的一帧及其到达时间
     private var latest: Image? = null
+    private var latestAt = 0L
+
+    // 进行中的一次截屏
+    private var pending: ((Bitmap?) -> Unit)? = null
     private var grabToken = 0
     private val releaseLater = Runnable { release() }
 
@@ -53,12 +57,12 @@ class ScreenCapture(
         }, main)
 
         val (w, h, dpi) = screenSize()
+        val r = newReader(w, h)
         display = try {
-            // 先不接 surface：闲置时不渲染
             p.createVirtualDisplay(
                 "huaci-capture", w, h, dpi,
                 DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-                null, null, main
+                r.surface, null, main
             )
         } catch (_: Exception) { null }
         if (display == null) { release(); return false }
@@ -66,80 +70,77 @@ class ScreenCapture(
         return true
     }
 
+    private fun newReader(w: Int, h: Int): ImageReader {
+        val r = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 3)
+        r.setOnImageAvailableListener({ rd ->
+            try {
+                val img = rd.acquireLatestImage() ?: return@setOnImageAvailableListener
+                latest?.close()
+                latest = img
+                latestAt = SystemClock.uptimeMillis()
+            } catch (_: Exception) {}
+        }, main)
+        reader = r; readerW = w; readerH = h
+        return r
+    }
+
     /**
-     * 抓一帧。先把自己的悬浮窗都移走再调用。
-     * @param settleMs 等多久再接画面（让键盘、弹窗的消失动画走完）
+     * 截一帧。调用前先把自己的悬浮窗都移走。
+     * @param hiddenAt 悬浮窗移走的时刻（SystemClock.uptimeMillis）；只接受这之后到达的画面
+     * @param settleMs 至少等多久（让键盘、弹窗的消失动画走完）
      */
-    fun grab(settleMs: Long, callback: (Bitmap?) -> Unit) {
-        if (display == null) return callback(null)
-        cancelGrab()
+    fun grab(hiddenAt: Long, settleMs: Long, callback: (Bitmap?) -> Unit) {
+        val vd = display ?: return callback(null)
         val token = ++grabToken
         pending = callback
         keepAlive()
-        main.postDelayed({ if (token == grabToken) attachAndWait(token) }, settleMs)
-    }
 
-    private fun attachAndWait(token: Int) {
-        val vd = display ?: return finishGrab(token, null)
+        // 屏幕转过：调整虚拟屏幕和接收器尺寸
         val (w, h, dpi) = screenSize()
-        if (reader == null || w != readerW || h != readerH) {
-            reader?.close()
-            if (w != readerW || h != readerH) vd.resize(w, h, dpi)
-            reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 3)
-            readerW = w; readerH = h
+        if (w != readerW || h != readerH) {
+            val old = reader
+            val r = newReader(w, h)
+            try { vd.resize(w, h, dpi); vd.surface = r.surface } catch (_: Exception) {}
+            try { latest?.close() } catch (_: Exception) {}
+            latest = null; latestAt = 0
+            try { old?.setOnImageAvailableListener(null, null); old?.close() } catch (_: Exception) {}
         }
-        val r = reader ?: return finishGrab(token, null)
 
-        // 每来一帧就留下最新的；150ms 内没有新帧就认为画面稳定了
-        val settled = Runnable { finishGrab(token, null) }
-        r.setOnImageAvailableListener({ rd ->
-            if (token != grabToken) return@setOnImageAvailableListener
-            try {
-                latest?.close()
-                latest = rd.acquireLatestImage()
-            } catch (_: Exception) {}
-            main.removeCallbacks(settled)
-            main.postDelayed(settled, 150)
-        }, main)
-        vd.surface = r.surface
-        // 最多等 1.2 秒
-        main.postDelayed({ if (token == grabToken) finishGrab(token, null) }, 1200)
+        val start = SystemClock.uptimeMillis()
+        fun check() {
+            if (token != grabToken) return
+            val now = SystemClock.uptimeMillis()
+            val waited = now - start
+            val fresh = latest != null && latestAt >= hiddenAt + 60
+            // 有新画面，且距最后一帧已稳定 120ms（动画走完）→ 取它
+            if (waited >= settleMs && fresh && now - latestAt >= 120) return deliver(token)
+            // 等了 1.5 秒：画面一直在动就取最新的；完全没有新帧（屏幕静止）就取现有的那帧
+            if (waited >= settleMs + 1500) return deliver(token)
+            main.postDelayed({ check() }, 40)
+        }
+        main.postDelayed({ check() }, 40)
     }
 
-    private fun finishGrab(token: Int, ignored: Bitmap?) {
+    private fun deliver(token: Int) {
         if (token != grabToken) return
-        grabToken++ // 之后的回调都作废
+        grabToken++
         val img = latest
-        latest = null
-        val bmp = try { img?.let { toBitmap(it) } } catch (_: Exception) { null } ?: ignored
-        try { img?.close() } catch (_: Exception) {}
-        detach()
+        val bmp = try { img?.let { toBitmap(it) } } catch (_: Exception) { null }
         val cb = pending
         pending = null
         cb?.invoke(bmp)
     }
 
-    private fun detach() {
-        try { reader?.setOnImageAvailableListener(null, null) } catch (_: Exception) {}
-        try { display?.surface = null } catch (_: Exception) {}
-    }
-
-    private fun cancelGrab() {
-        grabToken++
-        try { latest?.close() } catch (_: Exception) {}
-        latest = null
-        detach()
-    }
-
     private fun toBitmap(image: Image): Bitmap {
         val plane = image.planes[0]
+        val buffer = plane.buffer.duplicate().apply { rewind() }
         val pixelStride = plane.pixelStride
         val rowStride = plane.rowStride
         val rowPadding = rowStride - pixelStride * image.width
         val padded = Bitmap.createBitmap(
             image.width + rowPadding / pixelStride, image.height, Bitmap.Config.ARGB_8888
         )
-        padded.copyPixelsFromBuffer(plane.buffer)
+        padded.copyPixelsFromBuffer(buffer)
         if (padded.width == image.width) return padded
         val exact = Bitmap.createBitmap(padded, 0, 0, image.width, image.height)
         padded.recycle()
@@ -164,15 +165,17 @@ class ScreenCapture(
     private fun cleanup() {
         val wasActive = projection != null
         main.removeCallbacks(releaseLater)
-        // 进行中的截屏：告诉调用方失败了，避免界面卡在截屏状态
+        grabToken++
         val cb = pending
         pending = null
-        cancelGrab()
+        try { reader?.setOnImageAvailableListener(null, null) } catch (_: Exception) {}
+        try { latest?.close() } catch (_: Exception) {}
+        latest = null; latestAt = 0
         try { display?.release() } catch (_: Exception) {}
         try { reader?.close() } catch (_: Exception) {}
         display = null; reader = null; projection = null
         readerW = 0; readerH = 0
-        cb?.invoke(null)
+        cb?.invoke(null) // 进行中的截屏：告诉调用方失败了，避免界面卡住
         if (wasActive) onStopped()
     }
 
@@ -188,7 +191,7 @@ class ScreenCapture(
     }
 
     companion object {
-        /** 闲置 2 分钟后释放投射 */
-        const val IDLE_MS = 2 * 60 * 1000L
+        /** 闲置 90 秒后释放投射 */
+        const val IDLE_MS = 90 * 1000L
     }
 }

@@ -123,6 +123,7 @@ class FloatService : Service() {
     private var shotExpanded = false
     private var cropOverlay: CropOverlay? = null
     private var consentToken = 0
+    private var hiddenAt = 0L   // 悬浮窗移走的时刻：只用这之后的屏幕画面
 
     // 对话状态
     private var selected = ""
@@ -394,7 +395,7 @@ class FloatService : Service() {
         content = root.getChildAt(0)
         resizeGrip = root.findViewById(R.id.resize)
         scanHint = TextView(ui).apply {
-            text = "松手识别框里的文字"
+            text = "拖到文字上 · 松手识别"
             setTextColor(getColor(R.color.accent_ink))
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
             background = getDrawable(R.drawable.bg_btn_accent)
@@ -452,6 +453,7 @@ class FloatService : Service() {
         root.findViewById<View>(R.id.btnClose).setOnClickListener { closePanel() }
         root.findViewById<View>(R.id.btnPaste).setOnClickListener { pasteFromClipboard() }
         root.findViewById<View>(R.id.btnShot).setOnClickListener { startCapture() }
+        root.findViewById<View>(R.id.btnScan).setOnClickListener { enterScanMode() }
         root.findViewById<View>(R.id.shotRemove).setOnClickListener { clearShot(); clearThread() }
         shotView.setOnClickListener {
             shotExpanded = !shotExpanded
@@ -512,10 +514,8 @@ class FloatService : Service() {
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    // 进入放大镜后，后续手势由整块浮窗接管（见 enterScanMode）
                     header.removeCallbacks(longPress)
-                    if (scanMode) {
-                        if (e.actionMasked == MotionEvent.ACTION_UP) startScan() else exitScanMode()
-                    }
                 }
             }
             true
@@ -577,9 +577,31 @@ class FloatService : Service() {
         val p = panel ?: return
         val lp = panelLp ?: return
         if (panelFocusable) setPanelFocusable(false)
+        if (scanMode) return
         scanMode = true
-        content.visibility = View.INVISIBLE
-        resizeGrip.visibility = View.INVISIBLE
+        // 整块浮窗接管触摸：按住任意位置拖动取景框，松手识别
+        var tracking = false
+        var ax = 0f; var ay = 0f; var sx = 0; var sy = 0; var moved = false
+        p.scanTouch = { e ->
+            if (!tracking) {
+                tracking = true; moved = false
+                ax = e.rawX; ay = e.rawY; sx = lp.x; sy = lp.y
+            }
+            when (e.actionMasked) {
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = e.rawX - ax; val dy = e.rawY - ay
+                    if (abs(dx) > 4 || abs(dy) > 4) moved = true
+                    lp.x = (sx + dx.toInt()).coerceIn(-lp.width / 2, screenW() - lp.width / 2)
+                    lp.y = (sy + dy.toInt()).coerceIn(0, (screenH() - dp(60)).coerceAtLeast(0))
+                    safeUpdate(p, lp)
+                }
+                MotionEvent.ACTION_UP -> { tracking = false; startScan() }
+                MotionEvent.ACTION_CANCEL -> tracking = false
+            }
+        }
+        // 用透明而不是隐藏：隐藏会打断正在拖动的手指
+        content.alpha = 0f
+        resizeGrip.alpha = 0f
         scanHint.visibility = View.VISIBLE
         p.background = getDrawable(R.drawable.bg_scan_frame)
         lp.alpha = 1f
@@ -590,8 +612,9 @@ class FloatService : Service() {
         if (!scanMode) return
         scanMode = false
         val p = panel ?: return
-        content.visibility = View.VISIBLE
-        resizeGrip.visibility = View.VISIBLE
+        p.scanTouch = null
+        content.alpha = 1f
+        resizeGrip.alpha = 1f
         scanHint.visibility = View.GONE
         p.background = getDrawable(R.drawable.bg_panel)
         val lp = panelLp ?: return
@@ -779,6 +802,7 @@ class FloatService : Service() {
         if (panel != null) setPanelFocusable(false)
         removeSafely(panel, panelShown); panelShown = false
         hideBubble()
+        hiddenAt = android.os.SystemClock.uptimeMillis()
     }
 
     private fun onCaptureConsent(intent: Intent) {
@@ -809,7 +833,7 @@ class FloatService : Service() {
     }
 
     private fun grabAndCrop(settleMs: Long) {
-        capture.grab(settleMs) { bmp ->
+        capture.grab(hiddenAt, settleMs) { bmp ->
             if (!running) return@grab
             if (bmp == null) {
                 toast("没截到画面，请再试一次")

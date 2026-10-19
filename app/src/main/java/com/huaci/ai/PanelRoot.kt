@@ -13,6 +13,17 @@ class PanelRoot @JvmOverloads constructor(
 
     var onBack: (() -> Unit)? = null
     var onOutsideTouch: (() -> Unit)? = null
+    /** 放大镜模式：整块浮窗接管触摸（拖动取景框、松手识别） */
+    var scanTouch: ((MotionEvent) -> Unit)? = null
+
+    override fun onInterceptTouchEvent(ev: MotionEvent): Boolean =
+        if (scanTouch != null) true else super.onInterceptTouchEvent(ev)
+
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        val h = scanTouch ?: return super.onTouchEvent(event)
+        h(event)
+        return true
+    }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (event.keyCode == KeyEvent.KEYCODE_BACK) {
