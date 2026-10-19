@@ -78,11 +78,20 @@
                     android:textColor="@color/ink" />
 
                 <RadioButton
+                    android:id="@+id/pDeepseek"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginEnd="18dp"
+                    android:buttonTint="@color/accent"
+                    android:text="DeepSeek"
+                    android:textColor="@color/ink" />
+
+                <RadioButton
                     android:id="@+id/pOpenai"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:buttonTint="@color/accent"
-                    android:text="OpenAI 兼容接口"
+                    android:text="其他兼容接口"
                     android:textColor="@color/ink" />
             </RadioGroup>
 
@@ -122,6 +131,43 @@
                 android:id="@+id/model"
                 style="@style/Field"
                 android:inputType="text" />
+
+            <!-- 仅 DeepSeek：一键选模型 + 深度思考开关 -->
+            <LinearLayout
+                android:id="@+id/deepseekBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="10dp"
+                    android:orientation="horizontal">
+
+                    <TextView
+                        android:id="@+id/pickFlash"
+                        style="@style/BtnSoft"
+                        android:layout_marginEnd="8dp"
+                        android:text="flash · 快又省" />
+
+                    <TextView
+                        android:id="@+id/pickPro"
+                        style="@style/BtnSoft"
+                        android:text="v4-pro · 更强" />
+                </LinearLayout>
+
+                <CheckBox
+                    android:id="@+id/deepThink"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:buttonTint="@color/accent"
+                    android:text="深度思考（更准，但要多等一会儿）"
+                    android:textColor="@color/ink"
+                    android:textSize="14sp" />
+            </LinearLayout>
 
             <LinearLayout
                 android:layout_width="match_parent"

@@ -9,6 +9,8 @@ data class Preset(val name: String, val prompt: String)
 object Prefs {
     const val ANTHROPIC = "anthropic"
     const val OPENAI = "openai"
+    const val DEEPSEEK = "deepseek"
+    val ALL = listOf(ANTHROPIC, DEEPSEEK, OPENAI)
 
     val DEFAULT_PRESETS = """
         解释 | 用通俗的话解释这段文字是什么意思，必要时补充背景。
@@ -31,10 +33,12 @@ object Prefs {
     fun model(c: Context): String = sp(c).getString("model", null) ?: defaultModel(provider(c))
     fun presetsText(c: Context): String = sp(c).getString("presets", null) ?: DEFAULT_PRESETS
     fun autoRun(c: Context): Boolean = sp(c).getBoolean("autoRun", false)
+    /** DeepSeek 深度思考：默认关，划词场景要快 */
+    fun deepThink(c: Context): Boolean = sp(c).getBoolean("deepThink", false)
 
     fun save(
         c: Context, provider: String, baseUrl: String, apiKey: String,
-        model: String, presets: String, autoRun: Boolean
+        model: String, presets: String, autoRun: Boolean, deepThink: Boolean
     ) {
         sp(c).edit()
             .putString("provider", provider)
@@ -43,6 +47,7 @@ object Prefs {
             .putString("model", model.trim())
             .putString("presets", presets)
             .putBoolean("autoRun", autoRun)
+            .putBoolean("deepThink", deepThink)
             .apply()
     }
 
@@ -53,11 +58,17 @@ object Prefs {
         sp(c).edit().putInt("bx", x).putInt("by", y).apply()
     }
 
-    fun defaultBase(provider: String) =
-        if (provider == ANTHROPIC) "https://api.anthropic.com" else "https://api.openai.com/v1"
+    fun defaultBase(provider: String) = when (provider) {
+        ANTHROPIC -> "https://api.anthropic.com"
+        DEEPSEEK -> "https://api.deepseek.com"
+        else -> "https://api.openai.com/v1"
+    }
 
-    fun defaultModel(provider: String) =
-        if (provider == ANTHROPIC) "claude-sonnet-5-5" else ""
+    fun defaultModel(provider: String) = when (provider) {
+        ANTHROPIC -> "claude-sonnet-5-5"
+        DEEPSEEK -> "deepseek-flash"
+        else -> ""
+    }
 
     /** 每行「按钮名 | 指令」，竖线可用半角或全角。没写竖线时整行既当名字又当指令。 */
     fun presets(c: Context): List<Preset> =

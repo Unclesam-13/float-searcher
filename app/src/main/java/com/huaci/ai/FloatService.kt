@@ -452,6 +452,7 @@ class FloatService : Service() {
             },
             onDone = { finishAnswer(null, stopped = false) },
             onError = { msg -> finishAnswer(msg, stopped = false) },
+            onThinking = { n -> if (answer.isEmpty()) status.text = "深度思考中…（已想 $n 字）" },
         )
     }
 

@@ -38,6 +38,7 @@ class AiClient(private val ctx: Context) {
         onDelta: (String) -> Unit,
         onDone: () -> Unit,
         onError: (String) -> Unit,
+        onThinking: ((Int) -> Unit)? = null, // 深度思考时回报已思考的字数
     ) {
         cancel()
         val myGen = generation
@@ -56,13 +57,19 @@ class AiClient(private val ctx: Context) {
             var c: HttpURLConnection? = null
             try {
                 c = if (provider == Prefs.ANTHROPIC) openAnthropic(base, key, model, history)
-                    else openOpenAi(base, key, model, history)
+                    else openOpenAi(base, key, model, history, provider)
                 conn = c
                 val code = c.responseCode
                 if (code !in 200..299) {
                     val body = try { c.errorStream?.bufferedReader()?.readText().orEmpty() } catch (_: Exception) { "" }
                     ui { onError(describeHttp(code, body)) }
                     return@Thread
+                }
+                var thought = 0
+                val onReason: (String) -> Unit = { r ->
+                    thought += r.length
+                    val n = thought
+                    if (onThinking != null) ui { onThinking(n) }
                 }
                 c.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
                     while (alive()) {
@@ -71,7 +78,7 @@ class AiClient(private val ctx: Context) {
                         val data = line.substring(5).trim()
                         if (data.isEmpty()) continue
                         if (data == "[DONE]") break
-                        val piece = if (provider == Prefs.ANTHROPIC) parseAnthropic(data) else parseOpenAi(data)
+                        val piece = if (provider == Prefs.ANTHROPIC) parseAnthropic(data) else parseOpenAi(data, onReason)
                         if (!piece.isNullOrEmpty()) ui { onDelta(piece) }
                     }
                 }
@@ -121,7 +128,7 @@ class AiClient(private val ctx: Context) {
 
     // ---------- OpenAI 兼容 ----------
 
-    private fun openOpenAi(base: String, key: String, model: String, history: List<Msg>): HttpURLConnection {
+    private fun openOpenAi(base: String, key: String, model: String, history: List<Msg>, provider: String): HttpURLConnection {
         val url = if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
         val msgs = JSONArray()
         msgs.put(JSONObject().put("role", "system").put("content", SYSTEM_PROMPT))
@@ -130,15 +137,25 @@ class AiClient(private val ctx: Context) {
             .put("model", model)
             .put("stream", true)
             .put("messages", msgs)
+        if (provider == Prefs.DEEPSEEK) {
+            // DeepSeek 默认开启思考模式；划词默认关掉以求快，设置里可打开
+            val on = Prefs.deepThink(ctx)
+            body.put("thinking", JSONObject().put("type", if (on) "enabled" else "disabled"))
+        }
         return httpPost(url, body, mapOf("Authorization" to "Bearer $key"))
     }
 
-    private fun parseOpenAi(data: String): String? {
+    private fun parseOpenAi(data: String, onReason: (String) -> Unit): String? {
         val o = JSONObject(data)
         o.optJSONObject("error")?.let { throw IOException(it.optString("message", "服务返回错误")) }
         val choices = o.optJSONArray("choices") ?: return null
         if (choices.length() == 0) return null
         val delta = choices.getJSONObject(0).optJSONObject("delta") ?: return null
+        // 思考过程（DeepSeek、通义等用 reasoning_content），只计数不显示
+        if (delta.has("reasoning_content") && !delta.isNull("reasoning_content")) {
+            val r = delta.optString("reasoning_content")
+            if (r.isNotEmpty()) onReason(r)
+        }
         if (!delta.has("content") || delta.isNull("content")) return null
         return delta.getString("content")
     }

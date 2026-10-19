@@ -27,6 +27,8 @@ class MainActivity : Activity() {
     private lateinit var presets: EditText
     private lateinit var autoRun: CheckBox
     private lateinit var testResult: TextView
+    private lateinit var deepseekBox: android.view.View
+    private lateinit var deepThink: CheckBox
     private var testClient: AiClient? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -43,10 +45,19 @@ class MainActivity : Activity() {
         presets = findViewById(R.id.presets)
         autoRun = findViewById(R.id.autoRun)
         testResult = findViewById(R.id.testResult)
+        deepseekBox = findViewById(R.id.deepseekBox)
+        deepThink = findViewById(R.id.deepThink)
+        deepThink.isChecked = Prefs.deepThink(this)
+        findViewById<TextView>(R.id.pickFlash).setOnClickListener { model.setText("deepseek-flash") }
+        findViewById<TextView>(R.id.pickPro).setOnClickListener { model.setText("deepseek-v4-pro") }
 
         // 回填已保存的设置
         val p = Prefs.provider(this)
-        provider.check(if (p == Prefs.ANTHROPIC) R.id.pAnthropic else R.id.pOpenai)
+        provider.check(when (p) {
+            Prefs.ANTHROPIC -> R.id.pAnthropic
+            Prefs.DEEPSEEK -> R.id.pDeepseek
+            else -> R.id.pOpenai
+        })
         baseUrl.setText(Prefs.baseUrl(this))
         apiKey.setText(Prefs.apiKey(this))
         model.setText(Prefs.model(this))
@@ -56,11 +67,12 @@ class MainActivity : Activity() {
 
         provider.setOnCheckedChangeListener { _, _ ->
             val now = currentProvider()
-            val other = if (now == Prefs.ANTHROPIC) Prefs.OPENAI else Prefs.ANTHROPIC
-            // 地址/模型还是另一家的默认值或为空时，自动换成这一家的默认值
-            if (baseUrl.text.isBlank() || baseUrl.text.toString() == Prefs.defaultBase(other))
+            // 地址/模型为空或还是某一家的默认值时，自动换成这一家的默认值
+            val bases = Prefs.ALL.map { Prefs.defaultBase(it) }
+            val models = Prefs.ALL.map { Prefs.defaultModel(it) }
+            if (baseUrl.text.isBlank() || baseUrl.text.toString() in bases)
                 baseUrl.setText(Prefs.defaultBase(now))
-            if (model.text.isBlank() || model.text.toString() == Prefs.defaultModel(other))
+            if (model.text.isBlank() || model.text.toString() in models || model.text.startsWith("deepseek-"))
                 model.setText(Prefs.defaultModel(now))
             updateProviderHint(now)
         }
@@ -116,16 +128,23 @@ class MainActivity : Activity() {
         super.onDestroy()
     }
 
-    private fun currentProvider() =
-        if (provider.checkedRadioButtonId == R.id.pAnthropic) Prefs.ANTHROPIC else Prefs.OPENAI
+    private fun currentProvider() = when (provider.checkedRadioButtonId) {
+        R.id.pAnthropic -> Prefs.ANTHROPIC
+        R.id.pDeepseek -> Prefs.DEEPSEEK
+        else -> Prefs.OPENAI
+    }
 
     private fun updateProviderHint(p: String) {
-        if (p == Prefs.ANTHROPIC) {
+        deepseekBox.visibility = if (p == Prefs.DEEPSEEK) android.view.View.VISIBLE else android.view.View.GONE
+        if (p == Prefs.DEEPSEEK) {
+            providerHint.text = "DeepSeek 官方接口。Key 在 platform.deepseek.com 的「API keys」里创建，充值后即可使用。"
+            model.hint = "deepseek-flash 或 deepseek-v4-pro"
+        } else if (p == Prefs.ANTHROPIC) {
             providerHint.text = "使用 Anthropic 官方 Claude API，Key 在 console.anthropic.com 获取。用中转服务时把接口地址换成中转地址即可。"
             model.hint = "例如 claude-sonnet-5-5 或 claude-haiku-5-5"
         } else {
-            providerHint.text = "适用于 OpenAI 及兼容它的服务（DeepSeek、通义千问、Kimi、智谱等）。接口地址填到 /v1 这一级。"
-            model.hint = "填服务商给的模型名，例如 deepseek-chat"
+            providerHint.text = "适用于 OpenAI 及兼容它的服务（通义千问、Kimi、智谱等）。接口地址填到 /v1 这一级。"
+            model.hint = "填服务商给的模型名"
         }
         baseUrl.hint = Prefs.defaultBase(p)
     }
@@ -138,7 +157,8 @@ class MainActivity : Activity() {
             apiKey.text.toString(),
             model.text.toString(),
             presets.text.toString(),
-            autoRun.isChecked
+            autoRun.isChecked,
+            deepThink.isChecked
         )
     }
 
