@@ -62,6 +62,10 @@ object Prefs {
         sp(c).edit().putInt("pw$k", w).putInt("ph$k", h).apply()
     }
 
+    /** 识字取景框大小；0 表示用默认值 */
+    fun scanSize(c: Context): Pair<Int, Int> = sp(c).getInt("sw", 0) to sp(c).getInt("sh", 0)
+    fun saveScanSize(c: Context, w: Int, h: Int) { sp(c).edit().putInt("sw", w).putInt("sh", h).apply() }
+
     /** 浮窗不透明度 0.25 ~ 1.0 */
     fun panelAlpha(c: Context): Float = sp(c).getFloat("alpha", 1f).coerceIn(0.25f, 1f)
     fun savePanelAlpha(c: Context, a: Float) { sp(c).edit().putFloat("alpha", a).apply() }

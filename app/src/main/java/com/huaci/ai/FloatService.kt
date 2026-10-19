@@ -100,7 +100,10 @@ class FloatService : Service() {
     private lateinit var body: LinearLayout
     private lateinit var content: View
     private lateinit var resizeGrip: View
-    private lateinit var scanHint: TextView
+    private lateinit var scanLayer: View      // 取景框上的按钮和四角手柄
+    private lateinit var scanOk: View
+    private lateinit var scanCancel: View
+    private var savedPanelGeo: IntArray? = null // 进取景框前浮窗的 x, y, w, h
     private var typingRestoreH = 0
     private var typingRestoreY = 0
 
@@ -180,6 +183,7 @@ class FloatService : Service() {
         val p = panel
         val lp = panelLp
         if (p != null && lp != null) {
+            if (scanMode) exitScanMode()
             if (panelFocusable) setPanelFocusable(false)
             applySavedPanelGeometry(lp, resetPosition = true)
             safeUpdate(p, lp)
@@ -394,19 +398,7 @@ class FloatService : Service() {
         body = root.findViewById(R.id.body)
         content = root.getChildAt(0)
         resizeGrip = root.findViewById(R.id.resize)
-        scanHint = TextView(ui).apply {
-            text = "拖到文字上 · 松手识别"
-            setTextColor(getColor(R.color.accent_ink))
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
-            background = getDrawable(R.drawable.bg_btn_accent)
-            setPadding(dp(12), dp(6), dp(12), dp(6))
-            visibility = View.GONE
-        }
-        root.addView(scanHint, android.widget.FrameLayout.LayoutParams(
-            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
-            Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        ).apply { topMargin = dp(6) })
+        buildScanLayer(root)
 
         panelLp = overlayParams(dp(300), dp(300), focusable = false).also {
             applySavedPanelGeometry(it, resetPosition = true)
@@ -491,7 +483,7 @@ class FloatService : Service() {
         val longPress = Runnable {
             if (!moved) {
                 header.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
-                enterScanMode()
+                enterScanMode(fromLongPress = true, fingerX = downX, fingerY = downY)
             }
         }
         header.setOnTouchListener { _, e ->
@@ -573,39 +565,129 @@ class FloatService : Service() {
 
     // ---------- 放大镜识字 ----------
 
-    private fun enterScanMode() {
+    /** 取景框上的「✕」「识别」按钮和四角手柄（只在识字时显示） */
+    private fun buildScanLayer(root: PanelRoot) {
+        val layer = android.widget.FrameLayout(ui).apply { visibility = View.GONE }
+        val row = LinearLayout(ui).apply { orientation = LinearLayout.HORIZONTAL }
+        fun pill(label: String, accent: Boolean) = TextView(ui).apply {
+            text = label
+            gravity = Gravity.CENTER
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            setTextColor(getColor(if (accent) R.color.accent_ink else R.color.ink))
+            background = getDrawable(if (accent) R.drawable.bg_btn_accent else R.drawable.bg_chip)
+            setPadding(dp(14), 0, dp(14), 0)
+        }
+        val cancel = pill("✕", false)
+        val ok = pill("识别", true).apply { typeface = Typeface.DEFAULT_BOLD }
+        row.addView(cancel, LinearLayout.LayoutParams(dp(40), dp(32)).apply { marginEnd = dp(8) })
+        row.addView(ok, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, dp(32)))
+        layer.addView(row, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+            Gravity.TOP or Gravity.CENTER_HORIZONTAL
+        ).apply { topMargin = dp(6) })
+        // 四角手柄：提示可以拖角改大小
+        for (g in intArrayOf(Gravity.TOP or Gravity.START, Gravity.TOP or Gravity.END,
+                             Gravity.BOTTOM or Gravity.START, Gravity.BOTTOM or Gravity.END)) {
+            val dot = View(ui).apply { background = getDrawable(R.drawable.bg_scan_handle) }
+            layer.addView(dot, android.widget.FrameLayout.LayoutParams(dp(14), dp(14), g))
+        }
+        root.addView(layer, android.widget.FrameLayout.LayoutParams(
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        scanLayer = layer; scanOk = ok; scanCancel = cancel
+    }
+
+    /**
+     * 进入识字取景框。
+     * @param fromLongPress 由长按标题栏进入：这一下拖动松手就直接识别
+     * @param fingerX/fingerY 长按时手指的屏幕位置（取景框放到手指下面）
+     */
+    private fun enterScanMode(fromLongPress: Boolean = false, fingerX: Float = 0f, fingerY: Float = 0f) {
         val p = panel ?: return
         val lp = panelLp ?: return
         if (panelFocusable) setPanelFocusable(false)
         if (scanMode) return
         scanMode = true
-        // 整块浮窗接管触摸：按住任意位置拖动取景框，松手识别
+        savedPanelGeo = intArrayOf(lp.x, lp.y, lp.width, lp.height)
+
+        // 取景框用自己记住的大小
+        val (sw, sh) = Prefs.scanSize(this)
+        lp.width = (if (sw > 0) sw else min((screenW() * 0.8f).toInt(), dp(340))).coerceIn(minScanW(), screenW())
+        lp.height = (if (sh > 0) sh else dp(130)).coerceIn(minScanH(), screenH())
+        if (fromLongPress) { lp.x = (fingerX - lp.width / 2f).toInt(); lp.y = (fingerY - dp(20)).toInt() }
+        lp.x = lp.x.coerceIn(0, (screenW() - lp.width).coerceAtLeast(0))
+        lp.y = lp.y.coerceIn(0, (screenH() - lp.height).coerceAtLeast(0))
+
+        // 整块取景框接管触摸：拖内部移动，拖边/角改大小，点按钮识别或取消
+        val edge = dp(30).toFloat()
         var tracking = false
-        var ax = 0f; var ay = 0f; var sx = 0; var sy = 0; var moved = false
+        var quickRelease = fromLongPress
+        var ax = 0f; var ay = 0f; var sx = 0; var sy = 0; var swd = 0; var sht = 0
+        var eL = false; var eR = false; var eT = false; var eB = false
+        var moved = false; var resized = false
         p.scanTouch = { e ->
             if (!tracking) {
-                tracking = true; moved = false
-                ax = e.rawX; ay = e.rawY; sx = lp.x; sy = lp.y
+                tracking = true; moved = false; resized = false
+                ax = e.rawX; ay = e.rawY; sx = lp.x; sy = lp.y; swd = lp.width; sht = lp.height
+                // 由长按进入的那一下只移动；之后按在边缘附近就是改大小
+                if (quickRelease) { eL = false; eR = false; eT = false; eB = false }
+                else {
+                    eL = e.x < edge; eR = e.x > p.width - edge
+                    eT = e.y < edge; eB = e.y > p.height - edge
+                }
             }
             when (e.actionMasked) {
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = e.rawX - ax; val dy = e.rawY - ay
-                    if (abs(dx) > 4 || abs(dy) > 4) moved = true
-                    lp.x = (sx + dx.toInt()).coerceIn(-lp.width / 2, screenW() - lp.width / 2)
-                    lp.y = (sy + dy.toInt()).coerceIn(0, (screenH() - dp(60)).coerceAtLeast(0))
-                    safeUpdate(p, lp)
+                    val dx = (e.rawX - ax).toInt(); val dy = (e.rawY - ay).toInt()
+                    if (abs(dx) > 6 || abs(dy) > 6) moved = true
+                    if (moved) {
+                        if (eL || eR || eT || eB) {
+                            resized = true
+                            if (eL) { val nx = (sx + dx).coerceIn(0, sx + swd - minScanW()); lp.width = swd + (sx - nx); lp.x = nx }
+                            if (eR) lp.width = (swd + dx).coerceIn(minScanW(), screenW() - lp.x)
+                            if (eT) { val ny = (sy + dy).coerceIn(0, sy + sht - minScanH()); lp.height = sht + (sy - ny); lp.y = ny }
+                            if (eB) lp.height = (sht + dy).coerceIn(minScanH(), screenH() - lp.y)
+                        } else {
+                            lp.x = (sx + dx).coerceIn(0, (screenW() - lp.width).coerceAtLeast(0))
+                            lp.y = (sy + dy).coerceIn(0, (screenH() - lp.height).coerceAtLeast(0))
+                        }
+                        safeUpdate(p, lp)
+                    }
                 }
-                MotionEvent.ACTION_UP -> { tracking = false; startScan() }
-                MotionEvent.ACTION_CANCEL -> tracking = false
+                MotionEvent.ACTION_UP -> {
+                    tracking = false
+                    when {
+                        quickRelease -> { quickRelease = false; startScan() }
+                        !moved && hit(scanOk, e) -> startScan()
+                        !moved && hit(scanCancel, e) -> exitScanMode()
+                        resized -> Prefs.saveScanSize(this, lp.width, lp.height)
+                    }
+                }
+                MotionEvent.ACTION_CANCEL -> { tracking = false; quickRelease = false }
             }
         }
         // 用透明而不是隐藏：隐藏会打断正在拖动的手指
         content.alpha = 0f
         resizeGrip.alpha = 0f
-        scanHint.visibility = View.VISIBLE
+        scanLayer.visibility = View.VISIBLE
         p.background = getDrawable(R.drawable.bg_scan_frame)
         lp.alpha = 1f
         safeUpdate(p, lp)
+        if (!fromLongPress) toast("拖框移动，拖边或角改大小，点「识别」")
+    }
+
+    private fun minScanW() = min(dp(120), screenW())
+    private fun minScanH() = min(dp(64), screenH())
+
+    /** 手指抬起的位置是否落在某个按钮上 */
+    private fun hit(v: View, e: MotionEvent): Boolean {
+        val loc = IntArray(2)
+        v.getLocationOnScreen(loc)
+        val pad = dp(6)
+        return e.rawX >= loc[0] - pad && e.rawX <= loc[0] + v.width + pad &&
+               e.rawY >= loc[1] - pad && e.rawY <= loc[1] + v.height + pad
     }
 
     private fun exitScanMode() {
@@ -615,9 +697,11 @@ class FloatService : Service() {
         p.scanTouch = null
         content.alpha = 1f
         resizeGrip.alpha = 1f
-        scanHint.visibility = View.GONE
+        scanLayer.visibility = View.GONE
         p.background = getDrawable(R.drawable.bg_panel)
         val lp = panelLp ?: return
+        savedPanelGeo?.let { g -> lp.x = g[0]; lp.y = g[1]; lp.width = g[2]; lp.height = g[3] }
+        savedPanelGeo = null
         lp.alpha = Prefs.panelAlpha(this)
         safeUpdate(p, lp)
     }
