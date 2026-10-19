@@ -11,11 +11,13 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.graphics.Typeface
 import android.graphics.drawable.Icon
 import android.os.Build
 import android.os.IBinder
+import android.util.Base64
 import android.provider.Settings
 import android.util.TypedValue
 import android.view.ContextThemeWrapper
@@ -27,11 +29,16 @@ import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import java.io.ByteArrayOutputStream
 import kotlin.math.abs
+import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * 前台服务：用 WindowManager 把「悬浮球」和「回答浮窗」加到系统悬浮层（TYPE_APPLICATION_OVERLAY），
@@ -43,7 +50,10 @@ class FloatService : Service() {
         const val ACTION_SHOW = "com.huaci.ai.SHOW"     // 打开浮窗（可带选中文字）
         const val ACTION_BUBBLE = "com.huaci.ai.BUBBLE" // 只显示悬浮球
         const val ACTION_STOP = "com.huaci.ai.STOP"     // 全部关闭
+        const val ACTION_CAPTURE_RESULT = "com.huaci.ai.CAPTURE_RESULT" // 截屏授权结果
         const val EXTRA_TEXT = "text"
+        const val EXTRA_RESULT_CODE = "resultCode"
+        const val EXTRA_RESULT_DATA = "resultData"
         private const val CHANNEL = "float"
         private const val NOTIFY_ID = 7
 
@@ -79,6 +89,18 @@ class FloatService : Service() {
     private lateinit var status: TextView
     private lateinit var btnStop: TextView
     private lateinit var input: EditText
+    private lateinit var shotBox: View
+    private lateinit var shotView: ImageView
+
+    // 截屏
+    private lateinit var capture: ScreenCapture
+    private var capturing = false
+    private var panelWasOpen = false
+    private var shotB64: String? = null     // 发给 AI 的 JPEG（base64）
+    private var shotThumb: Bitmap? = null   // 浮窗里显示的缩略图
+    private var shotW = 0
+    private var shotH = 0
+    private var shotExpanded = false
 
     // 对话状态
     private var selected = ""
@@ -97,6 +119,8 @@ class FloatService : Service() {
         ai = AiClient(this)
         ui = ContextThemeWrapper(this, R.style.AppTheme)
         createChannel()
+        // 投射结束（闲置释放或在系统里停止）后，把前台类型降回普通
+        capture = ScreenCapture(this) { if (running) goForeground() }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -118,6 +142,7 @@ class FloatService : Service() {
                 showBubble()
                 openPanel(text)
             }
+            ACTION_CAPTURE_RESULT -> onCaptureConsent(intent)
             else -> {
                 // ACTION_BUBBLE，或被系统杀掉后重启（intent 为 null）
                 showBubble()
@@ -129,6 +154,7 @@ class FloatService : Service() {
     override fun onDestroy() {
         running = false
         ai.cancel()
+        capture.release()
         removeSafely(panel, panelShown); panelShown = false
         removeSafely(bubble, bubbleShown); bubbleShown = false
         super.onDestroy()
@@ -143,7 +169,7 @@ class FloatService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
     }
 
-    private fun goForeground() {
+    private fun goForeground(projection: Boolean = capture.active) {
         val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         val open = PendingIntent.getForegroundService(
             this, 1, Intent(this, FloatService::class.java).setAction(ACTION_SHOW), flags
@@ -164,10 +190,14 @@ class FloatService : Service() {
             .addAction(Notification.Action.Builder(icon, "设置", settings).build())
             .addAction(Notification.Action.Builder(icon, "退出", stop).build())
             .build()
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIFY_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
-        } else {
-            startForeground(NOTIFY_ID, n)
+        val mp = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+        when {
+            Build.VERSION.SDK_INT >= 34 -> startForeground(
+                NOTIFY_ID, n,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or (if (projection) mp else 0)
+            )
+            Build.VERSION.SDK_INT >= 29 && projection -> startForeground(NOTIFY_ID, n, mp)
+            else -> startForeground(NOTIFY_ID, n)
         }
     }
 
@@ -204,24 +234,36 @@ class FloatService : Service() {
     private fun attachBubbleDrag(v: View) {
         val slop = ViewConfiguration.get(this).scaledTouchSlop
         var downX = 0f; var downY = 0f; var startX = 0; var startY = 0; var dragging = false
+        var longFired = false
+        // 长按悬浮球 = 截屏
+        val longPress = Runnable {
+            longFired = true
+            v.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+            v.alpha = 0.92f
+            startCapture()
+        }
         v.setOnTouchListener { _, e ->
             val lp = bubbleLp ?: return@setOnTouchListener false
             when (e.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     downX = e.rawX; downY = e.rawY; startX = lp.x; startY = lp.y; dragging = false
+                    longFired = false
                     v.alpha = 1f
+                    v.postDelayed(longPress, ViewConfiguration.getLongPressTimeout().toLong())
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = e.rawX - downX; val dy = e.rawY - downY
-                    if (!dragging && (abs(dx) > slop || abs(dy) > slop)) dragging = true
+                    if (!dragging && (abs(dx) > slop || abs(dy) > slop)) { dragging = true; v.removeCallbacks(longPress) }
                     if (dragging) {
                         lp.x = startX + dx.toInt(); lp.y = startY + dy.toInt()
                         safeUpdate(v, lp)
                     }
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    v.removeCallbacks(longPress)
                     v.alpha = 0.92f
-                    if (dragging) snapBubbleToEdge(v, lp)
+                    if (longFired) Unit
+                    else if (dragging) snapBubbleToEdge(v, lp)
                     else if (e.actionMasked == MotionEvent.ACTION_UP) { v.performClick(); openPanel(null) }
                 }
             }
@@ -274,6 +316,7 @@ class FloatService : Service() {
         ai.cancel()
         finishAnswer(null, stopped = true)
         setSelected("")
+        clearShot()
         clearThread()
         minimizePanel()
     }
@@ -289,6 +332,8 @@ class FloatService : Service() {
         status = root.findViewById(R.id.status)
         btnStop = root.findViewById(R.id.btnStop)
         input = root.findViewById(R.id.input)
+        shotBox = root.findViewById(R.id.shotBox)
+        shotView = root.findViewById(R.id.shot)
 
         panelLp = overlayParams(screenW() - dp(20), panelHeight(false), focusable = false).apply {
             x = dp(10)
@@ -301,6 +346,13 @@ class FloatService : Service() {
         root.findViewById<View>(R.id.btnMin).setOnClickListener { minimizePanel() }
         root.findViewById<View>(R.id.btnClose).setOnClickListener { closePanel() }
         root.findViewById<View>(R.id.btnPaste).setOnClickListener { pasteFromClipboard() }
+        root.findViewById<View>(R.id.btnShot).setOnClickListener { startCapture() }
+        root.findViewById<View>(R.id.shotRemove).setOnClickListener { clearShot(); clearThread() }
+        shotView.setOnClickListener {
+            shotExpanded = !shotExpanded
+            shotView.maxHeight = dp(if (shotExpanded) 320 else 110)
+            shotView.requestLayout()
+        }
         root.findViewById<View>(R.id.btnCopy).setOnClickListener { copyAnswer() }
         root.findViewById<View>(R.id.btnClear).setOnClickListener { clearThread() }
         root.findViewById<View>(R.id.btnSend).setOnClickListener { sendInput() }
@@ -358,7 +410,8 @@ class FloatService : Service() {
 
     private fun refreshChips() {
         chips.removeAllViews()
-        Prefs.presets(this).forEach { p ->
+        val list = if (shotB64 != null) listOf(Prefs.OCR_PRESET) + Prefs.presets(this) else Prefs.presets(this)
+        list.forEach { p ->
             val chip = TextView(ui).apply {
                 text = p.name
                 setTextColor(getColor(R.color.ink))
@@ -377,13 +430,136 @@ class FloatService : Service() {
     private fun setSelected(text: String) {
         val changed = text != selected
         selected = text
+        if (text.isNotBlank() && shotB64 != null) clearShot() // 新选了文字，换掉旧截图
         if (panel == null) return
-        if (selected.isBlank()) {
-            quote.text = "还没有选中文字。在任意 App 里长按选中 → 菜单里点「问 AI」；也可以复制后点右上角「粘贴」。"
-        } else {
-            quote.text = "“$selected”"
-        }
+        renderContext()
         if (changed) clearThread()
+    }
+
+    /** 浮窗顶部：显示截图或选中的文字。 */
+    private fun renderContext() {
+        if (panel == null) return
+        val thumb = shotThumb
+        if (shotB64 != null && thumb != null) {
+            shotBox.visibility = View.VISIBLE
+            shotView.setImageBitmap(thumb)
+            quote.text = "截图 $shotW × $shotH · 点预设或在下面提问"
+        } else {
+            shotBox.visibility = View.GONE
+            shotView.setImageDrawable(null)
+            quote.text = if (selected.isBlank())
+                "还没有内容。在任意 App 里选中文字 → 菜单里点「问 AI」；或者点右上角「截屏」「粘贴」。"
+            else "“$selected”"
+        }
+    }
+
+    // ================= 截屏 =================
+
+    /** 收起浮窗 → （首次需授权）→ 定格画面 → 选框。 */
+    private fun startCapture() {
+        if (capturing) return
+        capturing = true
+        panelWasOpen = panelShown
+        if (!capture.active) {
+            // 先拉起授权页，再移走悬浮窗（悬浮窗可见时才允许从后台打开页面）
+            try {
+                startActivity(Intent(this, CaptureConsentActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION))
+            } catch (e: Exception) {
+                toast("无法打开截屏授权：${e.message}")
+                capturing = false
+                return
+            }
+            hideAllWindows()
+        } else {
+            hideAllWindows()
+            grabAndCrop()
+        }
+    }
+
+    private fun hideAllWindows() {
+        if (panel != null) setPanelFocusable(false)
+        removeSafely(panel, panelShown); panelShown = false
+        hideBubble()
+    }
+
+    private fun onCaptureConsent(intent: Intent) {
+        val code = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
+        @Suppress("DEPRECATION")
+        val data: Intent? = intent.getParcelableExtra(EXTRA_RESULT_DATA)
+        if (code != android.app.Activity.RESULT_OK || data == null) {
+            toast("已取消截屏")
+            restoreAfterCapture()
+            return
+        }
+        // Android 14：拿到授权后，先以「屏幕投射」类型进入前台，再建立投射
+        try {
+            goForeground(projection = true)
+        } catch (e: Exception) {
+            toast("无法开始截屏：${e.message}")
+            restoreAfterCapture()
+            return
+        }
+        if (!capture.start(code, data)) {
+            goForeground(projection = false)
+            toast("无法开始截屏，请再试一次")
+            restoreAfterCapture()
+            return
+        }
+        grabAndCrop()
+    }
+
+    private fun grabAndCrop() {
+        capture.grab { bmp ->
+            if (bmp == null) {
+                toast("没截到画面，请再试一次")
+                restoreAfterCapture()
+                return@grab
+            }
+            CropOverlay(ui, wm, bmp) { result ->
+                if (result == null) restoreAfterCapture()
+                else attachShot(result)
+            }.show()
+        }
+    }
+
+    private fun restoreAfterCapture() {
+        capturing = false
+        if (panelWasOpen) openPanel(null) else showBubble()
+    }
+
+    /** 把裁好的截图放进浮窗：压缩成 JPEG，最长边不超过 1568 像素。 */
+    private fun attachShot(src: Bitmap) {
+        val scale = min(1f, 1568f / max(src.width, src.height))
+        val img = if (scale < 1f) Bitmap.createScaledBitmap(
+            src, (src.width * scale).roundToInt().coerceAtLeast(1),
+            (src.height * scale).roundToInt().coerceAtLeast(1), true
+        ) else src
+        val out = ByteArrayOutputStream()
+        img.compress(Bitmap.CompressFormat.JPEG, 85, out)
+
+        selected = ""
+        shotB64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+        shotThumb = img
+        shotW = src.width; shotH = src.height
+        shotExpanded = false
+        capturing = false
+
+        openPanel(null)
+        clearThread()
+        refreshChips()
+        renderContext()
+        shotView.maxHeight = dp(110)
+    }
+
+    private fun clearShot() {
+        shotB64 = null
+        shotThumb = null
+        shotW = 0; shotH = 0
+        if (panel != null) {
+            refreshChips()
+            renderContext()
+        }
     }
 
     private fun pasteFromClipboard() {
@@ -408,8 +584,14 @@ class FloatService : Service() {
     // ================= 提问与回答 =================
 
     private fun runPreset(p: Preset) {
+        val img = shotB64
+        if (img != null) {
+            clearThread()
+            ask(display = "［截图］" + p.name, content = Prefs.buildImagePrompt(p), image = img)
+            return
+        }
         if (selected.isBlank()) {
-            toast("先选中一段文字，或点右上角「粘贴」")
+            toast("先选中文字，或点右上角「截屏」「粘贴」")
             return
         }
         clearThread()
@@ -419,19 +601,23 @@ class FloatService : Service() {
     private fun sendInput() {
         val q = input.text.toString().trim()
         if (q.isEmpty()) return
-        val content = if (history.isEmpty() && selected.isNotBlank())
-            "关于下面这段文字：\n\"\"\"\n$selected\n\"\"\"\n\n我的问题：$q"
-        else q
+        val img = if (history.isEmpty()) shotB64 else null
+        val content = when {
+            img != null -> "请看这张截图。我的问题：$q"
+            history.isEmpty() && selected.isNotBlank() ->
+                "关于下面这段文字：\n\"\"\"\n$selected\n\"\"\"\n\n我的问题：$q"
+            else -> q
+        }
         input.setText("")
         setPanelFocusable(false)
-        ask(display = q, content = content)
+        ask(display = if (img != null) "［截图］$q" else q, content = content, image = img)
     }
 
-    private fun ask(display: String, content: String) {
+    private fun ask(display: String, content: String, image: String? = null) {
         if (busy) { ai.cancel(); finishAnswer(null, stopped = true) }
 
         addUserBubble(display)
-        history.add(AiClient.Msg("user", content))
+        history.add(AiClient.Msg("user", content, image))
         answer.setLength(0)
         val av = addAnswerView()
         answerView = av

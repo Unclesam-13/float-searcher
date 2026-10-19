@@ -5,6 +5,7 @@
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
@@ -48,13 +49,21 @@
             </intent-filter>
         </activity>
 
+        <!-- 截屏授权：弹出系统确认框后立即关闭 -->
+        <activity
+            android:name=".CaptureConsentActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:theme="@style/Translucent" />
+
         <service
             android:name=".FloatService"
             android:exported="false"
-            android:foregroundServiceType="specialUse">
+            android:foregroundServiceType="specialUse|mediaProjection">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="悬浮窗划词助手：保持屏幕顶层的悬浮球和回答浮窗" />
+                android:value="悬浮窗划词助手：保持屏幕顶层的悬浮球和回答浮窗，并按用户要求截取屏幕区域" />
         </service>
 
     </application>

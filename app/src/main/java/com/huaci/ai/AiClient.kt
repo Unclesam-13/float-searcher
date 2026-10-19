@@ -19,7 +19,8 @@ import java.net.UnknownHostException
  */
 class AiClient(private val ctx: Context) {
 
-    data class Msg(val role: String, val content: String)
+    /** image：可选的 JPEG（base64），只放在用户消息里 */
+    data class Msg(val role: String, val content: String, val image: String? = null)
 
     private val main = Handler(Looper.getMainLooper())
     @Volatile private var generation = 0
@@ -47,7 +48,11 @@ class AiClient(private val ctx: Context) {
 
         val provider = Prefs.provider(ctx)
         val key = Prefs.apiKey(ctx)
-        val model = Prefs.model(ctx)
+        var model = Prefs.model(ctx)
+        // DeepSeek 只有 deepseek-flash 能看图：带截图时自动用它
+        if (provider == Prefs.DEEPSEEK && history.any { it.image != null } && model != "deepseek-flash") {
+            model = "deepseek-flash"
+        }
         val base = Prefs.baseUrl(ctx).trim().trimEnd('/')
 
         if (key.isBlank()) { ui { onError("还没填 API Key，请打开「划词助手」App 设置。") }; return }
@@ -101,7 +106,13 @@ class AiClient(private val ctx: Context) {
     private fun openAnthropic(base: String, key: String, model: String, history: List<Msg>): HttpURLConnection {
         val url = if (base.endsWith("/v1")) "$base/messages" else "$base/v1/messages"
         val msgs = JSONArray()
-        history.forEach { msgs.put(JSONObject().put("role", it.role).put("content", it.content)) }
+        history.forEach { m ->
+            val content: Any = if (m.image == null) m.content else JSONArray()
+                .put(JSONObject().put("type", "image").put("source", JSONObject()
+                    .put("type", "base64").put("media_type", "image/jpeg").put("data", m.image)))
+                .put(JSONObject().put("type", "text").put("text", m.content))
+            msgs.put(JSONObject().put("role", m.role).put("content", content))
+        }
         val body = JSONObject()
             .put("model", model)
             .put("max_tokens", 2048)
@@ -132,7 +143,13 @@ class AiClient(private val ctx: Context) {
         val url = if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
         val msgs = JSONArray()
         msgs.put(JSONObject().put("role", "system").put("content", SYSTEM_PROMPT))
-        history.forEach { msgs.put(JSONObject().put("role", it.role).put("content", it.content)) }
+        history.forEach { m ->
+            val content: Any = if (m.image == null) m.content else JSONArray()
+                .put(JSONObject().put("type", "text").put("text", m.content))
+                .put(JSONObject().put("type", "image_url").put("image_url",
+                    JSONObject().put("url", "data:image/jpeg;base64," + m.image)))
+            msgs.put(JSONObject().put("role", m.role).put("content", content))
+        }
         val body = JSONObject()
             .put("model", model)
             .put("stream", true)

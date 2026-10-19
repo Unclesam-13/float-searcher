@@ -85,6 +85,14 @@ object Prefs {
             }
         }
 
+    /** 有截图时额外出现的第一个按钮 */
+    val OCR_PRESET = Preset("提取文字", "把截图里的文字原样提取出来，保持原有的分段和顺序，不要解释。")
+
+    /** 截图提问：图片随消息一起发送，这里只给文字指令。 */
+    fun buildImagePrompt(p: Preset): String =
+        if (p.prompt.contains("{text}")) p.prompt.replace("{text}", "截图中的内容")
+        else "${p.prompt}\n\n（要处理的内容在附带的截图里。）"
+
     fun buildPrompt(p: Preset, text: String): String =
         if (p.prompt.contains("{text}")) p.prompt.replace("{text}", text)
         else "${p.prompt}\n\n下面是选中的文字：\n\"\"\"\n$text\n\"\"\""
