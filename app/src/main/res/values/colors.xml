@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 浅色：微带绿意的纸白 + 玉石绿强调色 -->
+<resources>
+    <color name="bg">#F2F4F1</color>
+    <color name="surface">#FFFFFF</color>
+    <color name="surface2">#E8EDE9</color>
+    <color name="quote">#EDF3EF</color>
+    <color name="ink">#17201C</color>
+    <color name="ink_soft">#5B6A63</color>
+    <color name="line">#D5DDD8</color>
+    <color name="accent">#1E7A62</color>
+    <color name="accent_ink">#FFFFFF</color>
+    <color name="accent_soft">#331E7A62</color>
+    <color name="danger">#B23A2E</color>
+</resources>

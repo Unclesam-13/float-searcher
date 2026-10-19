@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <!-- 文字行，中间一段被选中，两端是选择手柄 -->
+    <path android:fillColor="#B3FFFFFF" android:pathData="M30,34h48v4H30z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M36,44h36v12H36z" />
+    <path android:fillColor="#1E7A62" android:pathData="M40,48.5h28v3H40z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M34.5,56h3v8h-3z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M70.5,56h3v8h-3z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M30,69a6,6 0,1 0,12 0a6,6 0,1 0,-12 0z" />
+    <path android:fillColor="#FFFFFFFF" android:pathData="M66,69a6,6 0,1 0,12 0a6,6 0,1 0,-12 0z" />
+</vector>
