@@ -11,8 +11,10 @@ android {
         applicationId = "com.huaci.ai"
         minSdk = 26          // 系统悬浮窗 TYPE_APPLICATION_OVERLAY 需要 Android 8.0+
         targetSdk = 34
-        versionCode = 5
+        versionCode = 6
         versionName = "1.3"
+        // 手机都是 ARM 芯片；去掉模拟器用的 x86 库，安装包小一半
+        ndk { abiFilters += listOf("arm64-v8a", "armeabi-v7a") }
     }
 
     // 固定签名：每次编译出的新版本都能直接覆盖安装，不用先卸载旧版。
