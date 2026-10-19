@@ -64,6 +64,10 @@ class FloatService : Service() {
         private const val CHANNEL = "float"
         private const val NOTIFY_ID = 7
 
+        /** 当前运行的服务（给「复制后提示」的无障碍服务用；同一进程、主线程） */
+        @Volatile var instance: FloatService? = null
+            private set
+
         @Volatile var running = false
             private set
 
@@ -104,6 +108,14 @@ class FloatService : Service() {
     private lateinit var scanOk: View
     private lateinit var scanCancel: View
     private var savedPanelGeo: IntArray? = null // 进取景框前浮窗的 x, y, w, h
+
+    // 剪贴板检测
+    private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+    private lateinit var clipCard: View
+    private lateinit var clipText: TextView
+    private var pendingClip: String? = null
+    private var clipChip: View? = null
+    private val hideChipLater = Runnable { hideClipChip() }
     private var typingRestoreH = 0
     private var typingRestoreY = 0
 
@@ -141,6 +153,7 @@ class FloatService : Service() {
     override fun onCreate() {
         super.onCreate()
         running = true
+        instance = this
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
         ai = AiClient(this)
         ui = ContextThemeWrapper(this, R.style.AppTheme)
@@ -200,6 +213,8 @@ class FloatService : Service() {
 
     override fun onDestroy() {
         running = false
+        instance = null
+        hideClipChip()
         ai.cancel()
         consentToken++
         cropOverlay?.dismiss(); cropOverlay = null
@@ -363,6 +378,113 @@ class FloatService : Service() {
         if (!text.isNullOrBlank() && Prefs.autoRun(this)) {
             Prefs.presets(this).firstOrNull()?.let { runPreset(it) }
         }
+        hideClipChip()
+        // 从悬浮球/通知打开时，看看剪贴板里有没有新复制的内容
+        if (text.isNullOrBlank() && Prefs.clipCheck(this)) {
+            mainHandler.postDelayed({ checkClipboard(fromCopy = false) }, 150)
+        }
+    }
+
+    // ================= 剪贴板检测 =================
+
+    /** 无障碍服务发现用户刚点了「复制」 */
+    fun onCopyDetected() {
+        if (!running || capturing || scanMode) return
+        // 等对方 App 把内容写进剪贴板
+        mainHandler.postDelayed({ checkClipboard(fromCopy = true) }, 300)
+    }
+
+    private fun checkClipboard(fromCopy: Boolean) {
+        if (!running || capturing || scanMode) return
+        if (panelFocusable) handleClip(ClipReader.readNow(this), fromCopy)
+        else ClipReader.read(this, wm) { handleClip(it, fromCopy) }
+    }
+
+    private fun handleClip(text: String?, fromCopy: Boolean) {
+        if (!running || text.isNullOrBlank()) return
+        if (text.hashCode() == Prefs.lastClip(this)) return // 提示过了
+        if (text == selected.trim()) { markClipSeen(text); return }
+        if (panelShown) showClipCard(text)
+        else if (fromCopy) showClipChip(text)
+    }
+
+    private fun markClipSeen(text: String?) {
+        if (!text.isNullOrBlank()) Prefs.setLastClip(this, text.trim().hashCode())
+    }
+
+    private fun showClipCard(text: String) {
+        if (panel == null) return
+        pendingClip = text
+        clipText.text = "剪贴板：" + text.replace('\n', ' ')
+        clipCard.visibility = View.VISIBLE
+        scroll.post { scroll.scrollTo(0, 0) }
+    }
+
+    private fun hideClipCard() {
+        if (panel != null) clipCard.visibility = View.GONE
+    }
+
+    private fun useClip() {
+        val t = pendingClip ?: return
+        pendingClip = null
+        markClipSeen(t)
+        hideClipCard()
+        hideClipChip()
+        openPanel(t)
+    }
+
+    private fun dismissClip() {
+        markClipSeen(pendingClip)
+        pendingClip = null
+        hideClipCard()
+        hideClipChip()
+    }
+
+    /** 浮窗收着时：在悬浮球旁边弹一个「问 AI：…」小提示，6 秒后消失 */
+    private fun showClipChip(text: String) {
+        hideClipChip()
+        pendingClip = text
+        val preview = text.replace('\n', ' ').let { if (it.length > 14) it.take(14) + "…" else it }
+        val chip = TextView(ui).apply {
+            this.text = "问 AI：$preview"
+            setTextColor(getColor(R.color.accent_ink))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f)
+            background = getDrawable(R.drawable.bg_btn_accent)
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+            maxLines = 1
+            setOnClickListener { useClip() }
+        }
+        val blp = bubbleLp
+        val lp = overlayParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            focusable = false, watchOutside = false
+        ).apply {
+            if (blp != null && bubbleShown) {
+                y = blp.y + dp(7)
+                if (blp.x > screenW() / 2) {
+                    gravity = Gravity.TOP or Gravity.END
+                    x = screenW() - blp.x + dp(6)
+                } else {
+                    x = blp.x + dp(56)
+                }
+            } else {
+                gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
+                x = 0
+                y = statusBarH() + dp(12)
+            }
+        }
+        try {
+            wm.addView(chip, lp)
+            clipChip = chip
+            mainHandler.postDelayed(hideChipLater, 6000)
+        } catch (_: Exception) {}
+    }
+
+    private fun hideClipChip() {
+        mainHandler.removeCallbacks(hideChipLater)
+        val c = clipChip ?: return
+        clipChip = null
+        try { wm.removeView(c) } catch (_: Exception) {}
     }
 
     private fun minimizePanel() {
@@ -446,6 +568,10 @@ class FloatService : Service() {
         root.findViewById<View>(R.id.btnPaste).setOnClickListener { pasteFromClipboard() }
         root.findViewById<View>(R.id.btnShot).setOnClickListener { startCapture() }
         root.findViewById<View>(R.id.btnScan).setOnClickListener { enterScanMode() }
+        clipCard = root.findViewById(R.id.clipCard)
+        clipText = root.findViewById(R.id.clipText)
+        root.findViewById<View>(R.id.clipUse).setOnClickListener { useClip() }
+        root.findViewById<View>(R.id.clipDismiss).setOnClickListener { dismissClip() }
         root.findViewById<View>(R.id.shotRemove).setOnClickListener { clearShot(); clearThread() }
         shotView.setOnClickListener {
             shotExpanded = !shotExpanded
@@ -992,6 +1118,8 @@ class FloatService : Service() {
             if (txt.isNullOrBlank()) {
                 toast("没读到剪贴板。可以长按下面的输入框手动粘贴")
             } else {
+                markClipSeen(txt)
+                hideClipCard()
                 setSelected(txt.trim())
                 if (!wasFocusable) setPanelFocusable(false)
                 if (Prefs.autoRun(this)) Prefs.presets(this).firstOrNull()?.let { runPreset(it) }
@@ -1142,6 +1270,7 @@ class FloatService : Service() {
     }
 
     private fun copyText(text: String) {
+        markClipSeen(text) // 自己复制的不再提示
         getSystemService(ClipboardManager::class.java)
             .setPrimaryClip(ClipData.newPlainText("划词助手", text))
         if (Build.VERSION.SDK_INT < 33) toast("已复制")

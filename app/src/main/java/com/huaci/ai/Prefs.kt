@@ -62,6 +62,14 @@ object Prefs {
         sp(c).edit().putInt("pw$k", w).putInt("ph$k", h).apply()
     }
 
+    /** 打开浮窗时检查剪贴板（默认开） */
+    fun clipCheck(c: Context): Boolean = sp(c).getBoolean("clipCheck", true)
+    fun setClipCheck(c: Context, on: Boolean) { sp(c).edit().putBoolean("clipCheck", on).apply() }
+
+    /** 已经提示过/处理过的剪贴板内容（存指纹），避免反复提示同一段 */
+    fun lastClip(c: Context): Int = sp(c).getInt("lastClip", 0)
+    fun setLastClip(c: Context, fingerprint: Int) { sp(c).edit().putInt("lastClip", fingerprint).apply() }
+
     /** 识字取景框大小；0 表示用默认值 */
     fun scanSize(c: Context): Pair<Int, Int> = sp(c).getInt("sw", 0) to sp(c).getInt("sh", 0)
     fun saveScanSize(c: Context, w: Int, h: Int) { sp(c).edit().putInt("sw", w).putInt("sh", h).apply() }

@@ -2,4 +2,6 @@
 <resources>
     <string name="app_name">划词助手</string>
     <string name="process_text_label">问 AI</string>
+    <string name="clip_watch_label">划词助手 · 复制后提示</string>
+    <string name="clip_watch_desc">在任意 App 里点「复制」后，悬浮球旁会弹出「问 AI」提示，点一下就能对复制的内容提问。本服务只用来发现复制动作，不读取屏幕内容。需要先打开划词助手的悬浮球。</string>
 </resources>

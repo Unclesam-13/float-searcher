@@ -156,6 +156,45 @@
                 android:orientation="vertical"
                 android:paddingBottom="4dp">
 
+                <!-- 剪贴板里有新内容时出现：用这段 / 忽略 -->
+                <LinearLayout
+                    android:id="@+id/clipCard"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="6dp"
+                    android:background="@drawable/bg_clip_card"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="12dp"
+                    android:paddingTop="4dp"
+                    android:paddingEnd="2dp"
+                    android:paddingBottom="4dp"
+                    android:visibility="gone">
+
+                    <TextView
+                        android:id="@+id/clipText"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:maxLines="2"
+                        android:textColor="@color/ink"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/clipUse"
+                        style="@style/PanelIconBtn"
+                        android:text="用这段"
+                        android:textStyle="bold" />
+
+                    <TextView
+                        android:id="@+id/clipDismiss"
+                        style="@style/PanelIconBtn"
+                        android:contentDescription="忽略剪贴板内容"
+                        android:text="✕"
+                        android:textColor="@color/ink_soft" />
+                </LinearLayout>
+
                 <!-- 截图缩略图：点一下放大/缩小，右上角 ✕ 移除 -->
                 <FrameLayout
                     android:id="@+id/shotBox"

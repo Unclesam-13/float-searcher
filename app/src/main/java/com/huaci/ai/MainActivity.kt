@@ -29,6 +29,7 @@ class MainActivity : Activity() {
     private lateinit var testResult: TextView
     private lateinit var deepseekBox: android.view.View
     private lateinit var deepThink: CheckBox
+    private lateinit var clipWatchStatus: TextView
     private var testClient: AiClient? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -45,6 +46,15 @@ class MainActivity : Activity() {
         presets = findViewById(R.id.presets)
         autoRun = findViewById(R.id.autoRun)
         testResult = findViewById(R.id.testResult)
+        clipWatchStatus = findViewById(R.id.clipWatchStatus)
+        findViewById<CheckBox>(R.id.clipCheck).apply {
+            isChecked = Prefs.clipCheck(this@MainActivity)
+            setOnCheckedChangeListener { _, on -> Prefs.setClipCheck(this@MainActivity, on) }
+        }
+        findViewById<TextView>(R.id.btnClipWatch).setOnClickListener {
+            try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+            catch (_: Exception) { toast("打不开无障碍设置，请到系统设置里手动找") }
+        }
         deepseekBox = findViewById(R.id.deepseekBox)
         deepThink = findViewById(R.id.deepThink)
         deepThink.isChecked = Prefs.deepThink(this)
@@ -116,6 +126,12 @@ class MainActivity : Activity() {
                           else "还没允许。点下面的按钮，在列表里找到「划词助手」并打开开关。"
         permStatus.setTextColor(getColor(if (ok) R.color.accent else R.color.ink_soft))
         btnPerm.text = if (ok) "重新查看权限" else "去开启悬浮窗权限"
+
+        val watching = isClipWatchOn()
+        clipWatchStatus.text = if (watching)
+            "✓ 已开启。在任意 App 点「复制」后，悬浮球旁会弹出「问 AI」。（需要悬浮球开着）"
+        else "未开启。打开后，复制完不用再点悬浮球，提示会自己弹出来。"
+        clipWatchStatus.setTextColor(getColor(if (watching) R.color.accent else R.color.ink_soft))
     }
 
     override fun onPause() {
@@ -126,6 +142,12 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         testClient?.cancel()
         super.onDestroy()
+    }
+
+    private fun isClipWatchOn(): Boolean {
+        val list = Settings.Secure.getString(contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES)
+            ?: return false
+        return list.split(':').any { it.startsWith("$packageName/") }
     }
 
     private fun currentProvider() = when (provider.checkedRadioButtonId) {

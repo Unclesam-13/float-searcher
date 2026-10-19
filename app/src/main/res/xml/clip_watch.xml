@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 只接收「点击」「提示」「窗口变化」三类事件的文字，用来发现复制动作；不读取屏幕内容 -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeViewClicked|typeNotificationStateChanged|typeWindowStateChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:canRetrieveWindowContent="false"
+    android:description="@string/clip_watch_desc"
+    android:notificationTimeout="100"
+    android:settingsActivity="com.huaci.ai.MainActivity" />

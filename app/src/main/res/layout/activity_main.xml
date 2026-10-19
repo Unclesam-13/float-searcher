@@ -236,6 +236,66 @@
                 android:text="恢复默认预设" />
         </LinearLayout>
 
+        <!-- 剪贴板检测 -->
+        <LinearLayout style="@style/Card">
+
+            <TextView
+                style="@style/CardTitle"
+                android:text="剪贴板检测" />
+
+            <CheckBox
+                android:id="@+id/clipCheck"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:buttonTint="@color/accent"
+                android:text="打开浮窗时检查剪贴板"
+                android:textColor="@color/ink"
+                android:textSize="14sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="32dp"
+                android:lineSpacingExtra="3dp"
+                android:text="有新复制的内容时，浮窗顶部会出现「用这段」。"
+                android:textColor="@color/ink_soft"
+                android:textSize="13sp" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="14dp"
+                android:text="复制后自动提示"
+                android:textColor="@color/ink"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/clipWatchStatus"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:lineSpacingExtra="3dp"
+                android:textColor="@color/ink_soft"
+                android:textSize="13sp" />
+
+            <TextView
+                android:id="@+id/btnClipWatch"
+                style="@style/BtnSoft"
+                android:layout_marginTop="10dp"
+                android:text="去无障碍里打开" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:lineSpacingExtra="3dp"
+                android:text="在无障碍列表里找到「划词助手 · 复制后提示」并打开。安卓 13 及以上如果开关是灰色的：到 系统设置 → 应用 → 划词助手 → 右上角 ⋮ → 允许受限制的设置，再回来打开。\n这个服务只用来发现你点了「复制」，不读取屏幕内容。系统读剪贴板时可能会弹出「已从剪贴板粘贴」的提示，这是正常的。"
+                android:textColor="@color/ink_soft"
+                android:textSize="12sp" />
+        </LinearLayout>
+
         <TextView
             android:id="@+id/btnStart"
             style="@style/BtnAccent"
@@ -261,7 +321,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:lineSpacingExtra="5dp"
-                android:text="• 在浏览器、阅读器、聊天软件里长按选中文字，在弹出的菜单里点「问 AI」（有的机型要先点「⋮ 更多」）。\n• 浮窗出现在屏幕最上层：点预设一键提问，或在底部输入框追问。\n• 截屏：点浮窗右上角「截屏」，或长按悬浮球。第一次要在系统弹窗里点「立即开始」，之后几分钟内不用再确认。拖动选框选区域、拖角调大小，点「放进对话框」后就能对截图提问。\n• 放大镜识字：点浮窗的「识字」，浮窗变成虚线取景框：拖框内部移动，拖边或角改大小，点「识别」识别框里的文字，点「✕」退出。快捷用法：长按标题栏直接拖到文字上，松手就识别。离线识别，不花 API 额度。\n• 按住浮窗标题栏可以拖动；拖右下角 ◢ 改大小（横屏、竖屏分别记住）；点「调节」改透明度。点「—」变回悬浮球，点悬浮球再展开。\n• 微信等不显示「问 AI」的 App：选中后点「分享」→ 划词助手，或先复制，再点浮窗里的「粘贴」。\n• 国产系统（小米、华为、OPPO、vivo）请在设置里允许本 App 后台运行和自启动，否则悬浮球可能被系统清掉。"
+                android:text="• 在浏览器、阅读器、聊天软件里长按选中文字，在弹出的菜单里点「问 AI」（有的机型要先点「⋮ 更多」）。\n• 浮窗出现在屏幕最上层：点预设一键提问，或在底部输入框追问。\n• 截屏：点浮窗右上角「截屏」，或长按悬浮球。第一次要在系统弹窗里点「立即开始」，之后几分钟内不用再确认。拖动选框选区域、拖角调大小，点「放进对话框」后就能对截图提问。\n• 放大镜识字：点浮窗的「识字」，浮窗变成虚线取景框：拖框内部移动，拖边或角改大小，点「识别」识别框里的文字，点「✕」退出。快捷用法：长按标题栏直接拖到文字上，松手就识别。离线识别，不花 API 额度。\n• 按住浮窗标题栏可以拖动；拖右下角 ◢ 改大小（横屏、竖屏分别记住）；点「调节」改透明度。点「—」变回悬浮球，点悬浮球再展开。\n• 剪贴板：复制了文字再点悬浮球，浮窗顶部会出现「用这段」；打开下面的「复制后自动提示」后，复制完悬浮球旁会直接弹出「问 AI」。\n• 微信等不显示「问 AI」的 App：选中后点「分享」→ 划词助手，或先复制，再点浮窗里的「粘贴」。\n• 国产系统（小米、华为、OPPO、vivo）请在设置里允许本 App 后台运行和自启动，否则悬浮球可能被系统清掉。"
                 android:textColor="@color/ink_soft"
                 android:textSize="14sp" />
         </LinearLayout>
