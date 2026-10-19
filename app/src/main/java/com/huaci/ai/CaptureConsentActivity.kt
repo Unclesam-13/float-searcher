@@ -15,6 +15,7 @@ class CaptureConsentActivity : Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        opened = true
         if (savedInstanceState != null) return // 旋转等重建时，等待原来的结果
         val mpm = getSystemService(MediaProjectionManager::class.java)
         try {
@@ -36,16 +37,37 @@ class CaptureConsentActivity : Activity() {
         if (requestCode == REQ) sendResult(resultCode, data)
     }
 
+    override fun onDestroy() {
+        // 没拿到结果就被关掉（按了 Home、被系统回收）：告诉服务取消，恢复浮窗
+        if (!sent && !isChangingConfigurations) deliver(RESULT_CANCELED, null)
+        super.onDestroy()
+    }
+
+    private var sent = false
+
     private fun sendResult(resultCode: Int, data: Intent?) {
-        val i = Intent(this, FloatService::class.java)
-            .setAction(FloatService.ACTION_CAPTURE_RESULT)
-            .putExtra(FloatService.EXTRA_RESULT_CODE, resultCode)
-        if (data != null) i.putExtra(FloatService.EXTRA_RESULT_DATA, data)
-        startForegroundService(i)
+        deliver(resultCode, data)
         finish()
         @Suppress("DEPRECATION")
         overridePendingTransition(0, 0)
     }
 
-    companion object { private const val REQ = 42 }
+    private fun deliver(resultCode: Int, data: Intent?) {
+        if (sent) return
+        sent = true
+        val i = Intent(this, FloatService::class.java)
+            .setAction(FloatService.ACTION_CAPTURE_RESULT)
+            .putExtra(FloatService.EXTRA_RESULT_CODE, resultCode)
+        if (data != null) i.putExtra(FloatService.EXTRA_RESULT_DATA, data)
+        // 服务已在前台运行，普通 startService 即可；失败时退回 startForegroundService
+        try { startService(i) } catch (_: Exception) {
+            try { startForegroundService(i) } catch (_: Exception) {}
+        }
+    }
+
+    companion object {
+        private const val REQ = 42
+        /** 授权页是否真的打开了（用来发现被系统拦截的情况） */
+        @Volatile var opened = false
+    }
 }

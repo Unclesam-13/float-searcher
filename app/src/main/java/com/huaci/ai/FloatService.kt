@@ -101,6 +101,8 @@ class FloatService : Service() {
     private var shotW = 0
     private var shotH = 0
     private var shotExpanded = false
+    private var cropOverlay: CropOverlay? = null
+    private var consentToken = 0
 
     // 对话状态
     private var selected = ""
@@ -154,6 +156,8 @@ class FloatService : Service() {
     override fun onDestroy() {
         running = false
         ai.cancel()
+        consentToken++
+        cropOverlay?.dismiss(); cropOverlay = null
         capture.release()
         removeSafely(panel, panelShown); panelShown = false
         removeSafely(bubble, bubbleShown); bubbleShown = false
@@ -169,7 +173,8 @@ class FloatService : Service() {
         getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
     }
 
-    private fun goForeground(projection: Boolean = capture.active) {
+    /** 返回 false 表示没能带上「屏幕投射」类型（授权已失效），已退回普通前台。 */
+    private fun goForeground(projection: Boolean = capture.active): Boolean {
         val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         val open = PendingIntent.getForegroundService(
             this, 1, Intent(this, FloatService::class.java).setAction(ACTION_SHOW), flags
@@ -191,14 +196,24 @@ class FloatService : Service() {
             .addAction(Notification.Action.Builder(icon, "退出", stop).build())
             .build()
         val mp = ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
-        when {
-            Build.VERSION.SDK_INT >= 34 -> startForeground(
-                NOTIFY_ID, n,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or (if (projection) mp else 0)
-            )
-            Build.VERSION.SDK_INT >= 29 && projection -> startForeground(NOTIFY_ID, n, mp)
-            else -> startForeground(NOTIFY_ID, n)
+        try {
+            when {
+                Build.VERSION.SDK_INT >= 34 -> startForeground(
+                    NOTIFY_ID, n,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE or (if (projection) mp else 0)
+                )
+                Build.VERSION.SDK_INT >= 29 && projection -> startForeground(NOTIFY_ID, n, mp)
+                else -> startForeground(NOTIFY_ID, n)
+            }
+        } catch (e: SecurityException) {
+            // 截屏授权已失效时不能再带投射类型，退回普通前台
+            if (!projection) throw e
+            if (Build.VERSION.SDK_INT >= 34)
+                startForeground(NOTIFY_ID, n, ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            else startForeground(NOTIFY_ID, n)
+            return false
         }
+        return true
     }
 
     // ================= 悬浮球 =================
@@ -462,6 +477,7 @@ class FloatService : Service() {
         panelWasOpen = panelShown
         if (!capture.active) {
             // 先拉起授权页，再移走悬浮窗（悬浮窗可见时才允许从后台打开页面）
+            CaptureConsentActivity.opened = false
             try {
                 startActivity(Intent(this, CaptureConsentActivity::class.java)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION))
@@ -471,9 +487,27 @@ class FloatService : Service() {
                 return
             }
             hideAllWindows()
+            // 有些系统（小米、OPPO、华为等）会静默拦截后台弹出页面：1.5 秒没打开就恢复浮窗并提示
+            val token = ++consentToken
+            val handler = android.os.Handler(mainLooper)
+            handler.postDelayed({
+                if (token == consentToken && capturing && !CaptureConsentActivity.opened) {
+                    consentToken++
+                    toast("截屏授权页被系统拦截了。请在系统设置里给「划词助手」打开「后台弹出界面」权限后再试")
+                    restoreAfterCapture()
+                }
+            }, 1500)
+            // 一分钟还没结果（比如在授权框上按了 Home）：放弃这次截屏
+            handler.postDelayed({
+                if (token == consentToken && capturing && !capture.active) {
+                    consentToken++
+                    restoreAfterCapture()
+                }
+            }, 60_000)
         } else {
+            val keyboardWasUp = panelFocusable
             hideAllWindows()
-            grabAndCrop()
+            grabAndCrop(settleMs = if (keyboardWasUp) 450 else 300)
         }
     }
 
@@ -484,6 +518,8 @@ class FloatService : Service() {
     }
 
     private fun onCaptureConsent(intent: Intent) {
+        consentToken++ // 作废超时检查
+        if (!capturing) return // 已经超时放弃了
         val code = intent.getIntExtra(EXTRA_RESULT_CODE, 0)
         @Suppress("DEPRECATION")
         val data: Intent? = intent.getParcelableExtra(EXTRA_RESULT_DATA)
@@ -493,10 +529,8 @@ class FloatService : Service() {
             return
         }
         // Android 14：拿到授权后，先以「屏幕投射」类型进入前台，再建立投射
-        try {
-            goForeground(projection = true)
-        } catch (e: Exception) {
-            toast("无法开始截屏：${e.message}")
+        if (!goForeground(projection = true)) {
+            toast("无法开始截屏，请再试一次")
             restoreAfterCapture()
             return
         }
@@ -506,24 +540,29 @@ class FloatService : Service() {
             restoreAfterCapture()
             return
         }
-        grabAndCrop()
+        // 等系统授权框的淡出动画走完再取画面
+        grabAndCrop(settleMs = 600)
     }
 
-    private fun grabAndCrop() {
-        capture.grab { bmp ->
+    private fun grabAndCrop(settleMs: Long) {
+        capture.grab(settleMs) { bmp ->
+            if (!running) return@grab
             if (bmp == null) {
                 toast("没截到画面，请再试一次")
                 restoreAfterCapture()
                 return@grab
             }
-            CropOverlay(ui, wm, bmp) { result ->
-                if (result == null) restoreAfterCapture()
-                else attachShot(result)
-            }.show()
+            cropOverlay = CropOverlay(ui, wm, bmp) { result ->
+                cropOverlay = null
+                if (running) {
+                    if (result == null) restoreAfterCapture() else attachShot(result)
+                }
+            }.also { it.show() }
         }
     }
 
     private fun restoreAfterCapture() {
+        if (!running) return
         capturing = false
         if (panelWasOpen) openPanel(null) else showBubble()
     }

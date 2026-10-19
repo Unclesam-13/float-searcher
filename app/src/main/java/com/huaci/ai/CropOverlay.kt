@@ -40,7 +40,16 @@ class CropOverlay(
     private fun dp(v: Float) = v * dm.density
     private fun dpi(v: Int) = (v * dm.density + 0.5f).toInt()
 
-    private val root = FrameLayout(ctx)
+    // 拦截返回键 = 取消
+    private val root = object : FrameLayout(ctx) {
+        override fun dispatchKeyEvent(event: android.view.KeyEvent): Boolean {
+            if (event.keyCode == android.view.KeyEvent.KEYCODE_BACK) {
+                if (event.action == android.view.KeyEvent.ACTION_UP) finish(null)
+                return true
+            }
+            return super.dispatchKeyEvent(event)
+        }
+    }
     private val crop = CropView(ctx)
     private var shown = false
     private var finished = false
@@ -82,8 +91,7 @@ class CropOverlay(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+            WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
                 WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT
@@ -148,6 +156,7 @@ class CropOverlay(
     private inner class CropView(context: Context) : View(context) {
         private val rect = RectF()
         private var initialized = false
+        private var fullScreen = false  // 点了「全屏」且之后没再拖动
         private val loc = IntArray(2)
 
         private val dim = Paint().apply { color = 0x8C000000.toInt() }
@@ -191,16 +200,21 @@ class CropOverlay(
                 val bw = w * 0.84f; val bh = min(h * 0.3f, bw)
                 rect.set((w - bw) / 2, h * 0.32f, (w + bw) / 2, h * 0.32f + bh)
                 initialized = true
+            } else if (initialized && w > 0 && h > 0 && (w > h) != (shot.width > shot.height)) {
+                // 选框过程中屏幕转了：定格画面对不上了，取消这次截屏
+                post { finish(null) }
             }
         }
 
         fun selectAll() {
             rect.set(0f, 0f, width.toFloat(), height.toFloat())
+            fullScreen = true
             invalidate()
         }
 
         /** 把选框（视图坐标）换算成截图上的像素区域并裁出来。 */
         fun cropped(): Bitmap? {
+            if (fullScreen) return shot // 整张截图（包括状态栏、导航栏区域）
             getLocationOnScreen(loc)
             val l = (rect.left + loc[0]).roundToInt().coerceIn(0, shot.width - 1)
             val t = (rect.top + loc[1]).roundToInt().coerceIn(0, shot.height - 1)
@@ -271,6 +285,7 @@ class CropOverlay(
                     return true
                 }
                 MotionEvent.ACTION_MOVE -> {
+                    fullScreen = false
                     val w = width.toFloat(); val h = height.toFloat()
                     val dx = x - lastX; val dy = y - lastY
                     lastX = x; lastY = y

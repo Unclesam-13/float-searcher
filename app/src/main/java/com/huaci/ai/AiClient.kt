@@ -67,7 +67,8 @@ class AiClient(private val ctx: Context) {
                 val code = c.responseCode
                 if (code !in 200..299) {
                     val body = try { c.errorStream?.bufferedReader()?.readText().orEmpty() } catch (_: Exception) { "" }
-                    ui { onError(describeHttp(code, body)) }
+                    val hasImage = history.any { it.image != null }
+                    ui { onError(describeHttp(code, body, hasImage)) }
                     return@Thread
                 }
                 var thought = 0
@@ -192,14 +193,14 @@ class AiClient(private val ctx: Context) {
         return c
     }
 
-    private fun describeHttp(code: Int, body: String): String {
+    private fun describeHttp(code: Int, body: String, hasImage: Boolean = false): String {
         val detail = try {
             val o = JSONObject(body)
             o.optJSONObject("error")?.optString("message")?.takeIf { it.isNotBlank() }
                 ?: o.optString("message").takeIf { it.isNotBlank() }
         } catch (_: Exception) { null } ?: body.take(160)
         val hint = when (code) {
-            400 -> "请求有误，常见原因是模型名写错"
+            400 -> if (hasImage) "所选模型可能不支持图片，换个能看图的模型再试" else "请求有误，常见原因是模型名写错"
             401 -> "API Key 不对或已失效"
             403 -> "这个 Key 没有权限，或所在地区不支持"
             404 -> "接口地址或模型名不对"
