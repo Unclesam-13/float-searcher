@@ -33,6 +33,10 @@ object Prefs {
     fun model(c: Context): String = sp(c).getString("model", null) ?: defaultModel(provider(c))
     fun presetsText(c: Context): String = sp(c).getString("presets", null) ?: DEFAULT_PRESETS
     fun autoRun(c: Context): Boolean = sp(c).getBoolean("autoRun", false)
+    /** DeepSeek 联网搜索（浮窗问答）：默认开，模型自己判断要不要搜 */
+    fun webSearch(c: Context): Boolean = sp(c).getBoolean("webSearch", true)
+    fun setWebSearch(c: Context, on: Boolean) { sp(c).edit().putBoolean("webSearch", on).apply() }
+
     /** DeepSeek 深度思考：默认关，划词场景要快 */
     fun deepThink(c: Context): Boolean = sp(c).getBoolean("deepThink", false)
 

@@ -42,6 +42,10 @@ class AiClient(private val ctx: Context) {
         onThinking: ((Int) -> Unit)? = null, // 深度思考时回报已思考的字数
         system: String = SYSTEM_PROMPT,       // 换成别的角色（比如翻译器）
         noThinking: Boolean = false,          // 强制关闭深度思考（求快）
+        web: Boolean = false,                 // DeepSeek 联网搜索
+        onSearch: ((String) -> Unit)? = null, // 开始搜索某个关键词
+        onReset: (() -> Unit)? = null,        // 之前流出的文字作废（模型决定先去搜）
+        onSources: ((List<SearchHit>) -> Unit)? = null, // 回答引用的来源（在 onDone 之前）
     ) {
         cancel()
         val myGen = generation
@@ -60,48 +64,237 @@ class AiClient(private val ctx: Context) {
         if (key.isBlank()) { ui { onError("还没填 API Key，请打开「划词助手」App 设置。") }; return }
         if (model.isBlank()) { ui { onError("还没填模型名，请打开「划词助手」App 设置。") }; return }
 
+        val anthropic = provider == Prefs.ANTHROPIC
+        val hasImage = history.any { it.image != null }
         Thread {
-            var c: HttpURLConnection? = null
             try {
-                c = if (provider == Prefs.ANTHROPIC) openAnthropic(base, key, model, history, system)
-                    else openOpenAi(base, key, model, history, provider, system, noThinking)
-                conn = c
-                val code = c.responseCode
-                if (code !in 200..299) {
-                    val body = try { c.errorStream?.bufferedReader()?.readText().orEmpty() } catch (_: Exception) { "" }
-                    val hasImage = history.any { it.image != null }
-                    ui { onError(describeHttp(code, body, hasImage)) }
-                    return@Thread
-                }
                 var thought = 0
                 val onReason: (String) -> Unit = { r ->
                     thought += r.length
                     val n = thought
                     if (onThinking != null) ui { onThinking(n) }
                 }
-                c.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
-                    while (alive()) {
-                        val line = reader.readLine() ?: break
-                        if (!line.startsWith("data:")) continue
-                        val data = line.substring(5).trim()
-                        if (data.isEmpty()) continue
-                        if (data == "[DONE]") break
-                        val piece = if (provider == Prefs.ANTHROPIC) parseAnthropic(data) else parseOpenAi(data, onReason)
-                        if (!piece.isNullOrEmpty()) ui { onDelta(piece) }
-                    }
+                val emit: (String) -> Unit = { p -> ui { onDelta(p) } }
+                if (web && provider == Prefs.DEEPSEEK) {
+                    val sources = webLoop(
+                        base, key, model, history, system, { alive() }, emit,
+                        onSearch = { q -> ui { onSearch?.invoke(q) } },
+                        onReset = { ui { onReset?.invoke() } },
+                    )
+                    if (!alive()) return@Thread
+                    ui { onSources?.invoke(sources) }
+                } else {
+                    val c = if (anthropic) openAnthropic(base, key, model, history, system)
+                        else openOpenAi(base, key, model, history, provider, system, noThinking)
+                    readRound(c, anthropic, { alive() }, emit, onReason, null, hasImage)
                 }
                 ui { onDone() }
+            } catch (e: HttpFail) {
+                ui { onError(e.message ?: "请求失败") }
             } catch (e: UnknownHostException) {
                 ui { onError("连不上服务器：请检查网络，或接口地址是否写对。") }
             } catch (e: SocketTimeoutException) {
                 ui { onError("等太久没有回应，请稍后再试。") }
             } catch (e: Exception) {
                 ui { onError(e.message ?: e.javaClass.simpleName) }
-            } finally {
-                try { c?.disconnect() } catch (_: Exception) {}
-                if (conn === c) conn = null
             }
         }.start()
+    }
+
+    // ---------- 一轮请求：读流式结果 ----------
+
+    private class ToolCall {
+        var id = ""
+        var name = ""
+        val args = StringBuilder()
+    }
+
+    private class Round(val content: String, val reasoning: String, val calls: List<ToolCall>)
+
+    /** 接口返回错误码：消息就是给用户看的说明 */
+    private class HttpFail(msg: String) : IOException(msg)
+
+    private fun readRound(
+        c: HttpURLConnection, anthropic: Boolean, alive: () -> Boolean,
+        emit: (String) -> Unit, onReason: (String) -> Unit,
+        tools: MutableMap<Int, ToolCall>?, hasImage: Boolean,
+    ): Round {
+        conn = c
+        try {
+            val code = c.responseCode
+            if (code !in 200..299) {
+                val body = try { c.errorStream?.bufferedReader()?.readText().orEmpty() } catch (_: Exception) { "" }
+                throw HttpFail(describeHttp(code, body, hasImage))
+            }
+            val sb = StringBuilder()
+            val think = StringBuilder()
+            c.inputStream.bufferedReader(Charsets.UTF_8).use { reader ->
+                while (alive()) {
+                    val line = reader.readLine() ?: break
+                    if (!line.startsWith("data:")) continue
+                    val data = line.substring(5).trim()
+                    if (data.isEmpty()) continue
+                    if (data == "[DONE]") break
+                    val piece = try {
+                        if (anthropic) parseAnthropic(data)
+                        else parseOpenAi(data, { r -> think.append(r); onReason(r) }, tools)
+                    } catch (_: org.json.JSONException) { null } // 偶尔有不完整的行
+                    if (!piece.isNullOrEmpty()) {
+                        sb.append(piece)
+                        emit(piece)
+                    }
+                }
+            }
+            val calls = tools?.toSortedMap()?.values?.toList() ?: emptyList()
+            return Round(sb.toString(), think.toString(), calls)
+        } finally {
+            try { c.disconnect() } catch (_: Exception) {}
+            if (conn === c) conn = null
+        }
+    }
+
+    // ---------- DeepSeek 联网 ----------
+
+    /** 一条搜索结果；index 在整次回答里唯一，回答里用 [index] 引用 */
+    data class SearchHit(
+        val index: Int, val title: String, val url: String,
+        val site: String, val date: String, val summary: String,
+    )
+
+    private fun searchTool(): JSONObject = JSONObject()
+        .put("type", "function")
+        .put("function", JSONObject()
+            .put("name", "web_search")
+            .put("description", "联网搜索网页，返回编号、标题、网址、发布日期和摘要。需要最新信息、新闻、价格、版本、具体数据或核实事实时使用。")
+            .put("parameters", JSONObject()
+                .put("type", "object")
+                .put("properties", JSONObject().put("query", JSONObject()
+                    .put("type", "string")
+                    .put("description", "搜索关键词，简短明确，不超过 60 个字。可以用 site:、after:2025、lang:zh,en 等语法。")))
+                .put("required", JSONArray().put("query"))))
+
+    private fun webNote(): String =
+        "\n\n你可以使用 web_search 工具联网搜索。涉及最新动态、新闻、价格、版本、天气、具体数据，或你不确定的事实时，先搜索再回答；" +
+        "常识和不需要时效的问题不必搜索。最多搜索 3 次。" +
+        "回答时，在用到搜索结果的句子末尾标注来源编号，例如 [1] 或 [2][3]，编号和搜索结果里的一致；不要在末尾另列来源清单。" +
+        "今天是 " + java.text.SimpleDateFormat("yyyy年M月d日", java.util.Locale.CHINA).format(java.util.Date()) + "。"
+
+    /** 模型自己决定搜不搜、搜什么；最多 3 轮搜索，第 4 轮不给工具，必须作答 */
+    private fun webLoop(
+        base: String, key: String, model: String, history: List<Msg>, system: String,
+        alive: () -> Boolean, emit: (String) -> Unit,
+        onSearch: (String) -> Unit, onReset: () -> Unit,
+    ): List<SearchHit> {
+        val msgs = openAiMessages(history, system + webNote())
+        val question = history.lastOrNull { it.role == "user" }?.content.orEmpty()
+        val hasImage = history.any { it.image != null }
+        val hits = ArrayList<SearchHit>()
+        var round = 0
+        while (true) {
+            if (!alive()) return emptyList()
+            val allowTools = round < 3
+            val body = JSONObject()
+                .put("model", model)
+                .put("stream", true)
+                .put("messages", JSONArray(msgs.toString()))
+                // 联网时关闭深度思考：带工具的思考模式要求每次都回传思考内容，容易出错
+                .put("thinking", JSONObject().put("type", "disabled"))
+            if (allowTools) body.put("tools", JSONArray().put(searchTool()))
+            val tools = if (allowTools) HashMap<Int, ToolCall>() else null
+            val c = httpPost(chatUrl(base), body, mapOf("Authorization" to "Bearer $key"))
+            val r = readRound(c, false, alive, emit, {}, tools, hasImage)
+            if (!alive()) return emptyList()
+
+            val calls = r.calls.filter { it.name == "web_search" }
+            if (calls.isEmpty()) return cited(r.content, hits)
+
+            onReset() // 前面流出来的「我来搜一下」不显示
+            calls.forEachIndexed { i, tc -> if (tc.id.isEmpty()) tc.id = "call_${round}_$i" }
+            val tcArr = JSONArray()
+            calls.forEach { tc ->
+                tcArr.put(JSONObject().put("id", tc.id).put("type", "function")
+                    .put("function", JSONObject().put("name", tc.name).put("arguments", tc.args.toString())))
+            }
+            val asst = JSONObject().put("role", "assistant").put("content", r.content).put("tool_calls", tcArr)
+            if (r.reasoning.isNotEmpty()) asst.put("reasoning_content", r.reasoning)
+            msgs.put(asst)
+
+            for (tc in calls) {
+                val q = queryFrom(tc.args.toString())
+                val text = if (q.isEmpty()) "搜索关键词为空。" else {
+                    onSearch(q)
+                    try {
+                        val found = search(base, key, q, question).mapIndexed { i, h -> h.copy(index = hits.size + 1 + i) }
+                        hits.addAll(found)
+                        formatHits(q, found)
+                    } catch (e: Exception) {
+                        "搜索失败：${e.message}。请根据已有知识回答，并说明没能联网核实。"
+                    }
+                }
+                msgs.put(JSONObject().put("role", "tool").put("tool_call_id", tc.id).put("content", text))
+            }
+            round++
+        }
+    }
+
+    private fun queryFrom(args: String): String = try {
+        JSONObject(args.ifBlank { "{}" }).optString("query").trim()
+    } catch (_: Exception) { "" }
+
+    /** DeepSeek 搜索接口：POST /v1/tools/search */
+    private fun search(base: String, key: String, query: String, question: String): List<SearchHit> {
+        val root = if (base.endsWith("/v1")) base.dropLast(3) else base
+        val body = JSONObject().put("query", query.take(128)).put("count", 6)
+        val oq = question.replace('\n', ' ').trim().take(128)
+        if (oq.isNotEmpty()) body.put("ori_question", oq)
+        val c = URL("$root/v1/tools/search").openConnection() as HttpURLConnection
+        try {
+            c.requestMethod = "POST"
+            c.doOutput = true
+            c.connectTimeout = 15_000
+            c.readTimeout = 25_000
+            c.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            c.setRequestProperty("Authorization", "Bearer $key")
+            c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
+            val code = c.responseCode
+            val text = (if (code in 200..299) c.inputStream else c.errorStream)
+                ?.bufferedReader(Charsets.UTF_8)?.readText().orEmpty()
+            if (code !in 200..299) throw IOException(describeHttp(code, text))
+            val arr = JSONObject(text).optJSONArray("results") ?: return emptyList()
+            val out = ArrayList<SearchHit>()
+            for (i in 0 until arr.length()) {
+                val o = arr.optJSONObject(i) ?: continue
+                val url = o.optString("url")
+                if (url.isBlank()) continue
+                fun str(n: String) = if (o.isNull(n)) "" else o.optString(n)
+                val summary = str("summary").ifBlank { str("snippet") }.take(800)
+                out.add(SearchHit(0, str("title"), url, str("site_name"), str("date"), summary))
+            }
+            return out
+        } finally {
+            try { c.disconnect() } catch (_: Exception) {}
+        }
+    }
+
+    private fun formatHits(query: String, hits: List<SearchHit>): String {
+        if (hits.isEmpty()) return "搜索「$query」没有找到结果。"
+        val sb = StringBuilder("搜索「$query」的结果：\n")
+        for (h in hits) {
+            sb.append("\n[").append(h.index).append("] ").append(h.title)
+            if (h.site.isNotEmpty()) sb.append(" — ").append(h.site)
+            if (h.date.length >= 10) sb.append(" · ").append(h.date.take(10))
+            sb.append('\n').append(h.url).append('\n').append(h.summary).append('\n')
+        }
+        return sb.toString()
+    }
+
+    /** 回答里引用了哪些 [编号]；一个都没引用时给前 5 条 */
+    private fun cited(answer: String, hits: List<SearchHit>): List<SearchHit> {
+        val used = Regex("""\[(\d{1,2})]""").findAll(answer)
+            .mapNotNull { it.groupValues[1].toIntOrNull() }
+            .filter { it in 1..hits.size }
+            .toSortedSet()
+        return if (used.isNotEmpty()) used.map { hits[it - 1] } else hits.take(5)
     }
 
     // ---------- Claude ----------
@@ -146,16 +339,8 @@ class AiClient(private val ctx: Context) {
         base: String, key: String, model: String, history: List<Msg>, provider: String,
         system: String, noThinking: Boolean,
     ): HttpURLConnection {
-        val url = if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
-        val msgs = JSONArray()
-        msgs.put(JSONObject().put("role", "system").put("content", system))
-        history.forEach { m ->
-            val content: Any = if (m.image == null) m.content else JSONArray()
-                .put(JSONObject().put("type", "text").put("text", m.content))
-                .put(JSONObject().put("type", "image_url").put("image_url",
-                    JSONObject().put("url", "data:image/jpeg;base64," + m.image)))
-            msgs.put(JSONObject().put("role", m.role).put("content", content))
-        }
+        val url = chatUrl(base)
+        val msgs = openAiMessages(history, system)
         val body = JSONObject()
             .put("model", model)
             .put("stream", true)
@@ -168,7 +353,22 @@ class AiClient(private val ctx: Context) {
         return httpPost(url, body, mapOf("Authorization" to "Bearer $key"))
     }
 
-    private fun parseOpenAi(data: String, onReason: (String) -> Unit): String? {
+    private fun chatUrl(base: String) = if (base.endsWith("/chat/completions")) base else "$base/chat/completions"
+
+    private fun openAiMessages(history: List<Msg>, system: String): JSONArray {
+        val msgs = JSONArray()
+        msgs.put(JSONObject().put("role", "system").put("content", system))
+        history.forEach { m ->
+            val content: Any = if (m.image == null) m.content else JSONArray()
+                .put(JSONObject().put("type", "text").put("text", m.content))
+                .put(JSONObject().put("type", "image_url").put("image_url",
+                    JSONObject().put("url", "data:image/jpeg;base64," + m.image)))
+            msgs.put(JSONObject().put("role", m.role).put("content", content))
+        }
+        return msgs
+    }
+
+    private fun parseOpenAi(data: String, onReason: (String) -> Unit, tools: MutableMap<Int, ToolCall>? = null): String? {
         val o = JSONObject(data)
         o.optJSONObject("error")?.let { throw IOException(it.optString("message", "服务返回错误")) }
         val choices = o.optJSONArray("choices") ?: return null
@@ -178,6 +378,21 @@ class AiClient(private val ctx: Context) {
         if (delta.has("reasoning_content") && !delta.isNull("reasoning_content")) {
             val r = delta.optString("reasoning_content")
             if (r.isNotEmpty()) onReason(r)
+        }
+        // 工具调用（联网搜索）分成很多碎片流过来，按 index 拼起来
+        val tcs = if (tools != null) delta.optJSONArray("tool_calls") else null
+        if (tools != null && tcs != null) {
+            for (i in 0 until tcs.length()) {
+                val tc = tcs.optJSONObject(i) ?: continue
+                val idx = if (tc.has("index")) tc.optInt("index") else tools.size
+                val call = tools.getOrPut(idx) { ToolCall() }
+                if (tc.has("id") && !tc.isNull("id")) tc.optString("id").takeIf { it.isNotEmpty() }?.let { call.id = it }
+                val fn = tc.optJSONObject("function")
+                if (fn != null) {
+                    if (fn.has("name") && !fn.isNull("name")) call.name += fn.optString("name")
+                    if (fn.has("arguments") && !fn.isNull("arguments")) call.args.append(fn.optString("arguments"))
+                }
+            }
         }
         if (!delta.has("content") || delta.isNull("content")) return null
         return delta.getString("content")
@@ -210,7 +425,8 @@ class AiClient(private val ctx: Context) {
             403 -> "这个 Key 没有权限，或所在地区不支持"
             404 -> "接口地址或模型名不对"
             429 -> "请求太频繁，或额度用完了"
-            500, 502, 503, 529 -> "服务暂时繁忙，稍后再试"
+            402 -> "账户余额不足"
+            500, 502, 503, 504, 529 -> "服务暂时繁忙，稍后再试"
             else -> "请求失败"
         }
         return if (detail.isBlank()) "$hint（$code）" else "$hint（$code）：$detail"

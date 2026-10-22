@@ -21,6 +21,14 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Base64
 import android.provider.Settings
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.TextPaint
+import android.text.method.LinkMovementMethod
+import android.text.style.ClickableSpan
+import android.text.style.ForegroundColorSpan
+import android.text.style.StyleSpan
+import android.net.Uri
 import android.util.TypedValue
 import android.view.ContextThemeWrapper
 import android.view.Gravity
@@ -162,6 +170,8 @@ class FloatService : Service() {
     private var selected = ""
     private val history = mutableListOf<AiClient.Msg>()
     private var answerView: TextView? = null
+    private var pendingSources: List<AiClient.SearchHit>? = null
+    private lateinit var btnWeb: TextView
     private val answer = StringBuilder()
     private var busy = false
     private var quoteExpanded = false
@@ -393,6 +403,7 @@ class FloatService : Service() {
         val lp = panelLp ?: return
 
         refreshChips() // 设置里改过预设时立即生效
+        updateWebBtn()
         if (!text.isNullOrBlank()) setSelected(text.trim())
 
         if (!panelShown) {
@@ -795,6 +806,13 @@ class FloatService : Service() {
             shotView.requestLayout()
         }
         root.findViewById<View>(R.id.btnCopy).setOnClickListener { copyAnswer() }
+        btnWeb = root.findViewById(R.id.btnWeb)
+        btnWeb.setOnClickListener {
+            Prefs.setWebSearch(this, !Prefs.webSearch(this))
+            updateWebBtn()
+            toast(if (Prefs.webSearch(this)) "已开启联网：需要时会先搜索，回答附来源" else "已关闭联网")
+        }
+        updateWebBtn()
         root.findViewById<View>(R.id.btnClear).setOnClickListener { clearThread() }
         root.findViewById<View>(R.id.btnSend).setOnClickListener { sendInput() }
         btnStop.setOnClickListener { ai.cancel(); finishAnswer(null, stopped = true) }
@@ -1381,6 +1399,7 @@ class FloatService : Service() {
         addUserBubble(display)
         history.add(AiClient.Msg("user", content, image))
         answer.setLength(0)
+        pendingSources = null
         val av = addAnswerView()
         answerView = av
         av.text = "…"
@@ -1393,6 +1412,7 @@ class FloatService : Service() {
             history.toList(),
             onDelta = { piece ->
                 val nearBottom = scroll.scrollY + scroll.height >= body.height - dp(48)
+                if (answer.isEmpty()) av.setTextColor(getColor(R.color.ink))
                 answer.append(piece)
                 av.text = Md.render(answer.toString())
                 status.text = "正在回答…"
@@ -1401,7 +1421,74 @@ class FloatService : Service() {
             onDone = { finishAnswer(null, stopped = false) },
             onError = { msg -> finishAnswer(msg, stopped = false) },
             onThinking = { n -> if (answer.isEmpty()) status.text = "深度思考中…（已想 $n 字）" },
+            web = webOn(),
+            onSearch = { q ->
+                if (answer.isEmpty()) {
+                    av.setTextColor(getColor(R.color.ink_soft))
+                    av.text = "正在搜索：$q …"
+                }
+                status.text = "正在联网搜索：$q"
+            },
+            onReset = { answer.setLength(0) },
+            onSources = { list -> pendingSources = list },
         )
+    }
+
+    // ---------- 联网 ----------
+
+    /** 只有 DeepSeek 能联网 */
+    private fun webOn() = Prefs.provider(this) == Prefs.DEEPSEEK && Prefs.webSearch(this)
+
+    private fun updateWebBtn() {
+        if (panel == null) return
+        btnWeb.visibility = if (Prefs.provider(this) == Prefs.DEEPSEEK) View.VISIBLE else View.GONE
+        val on = Prefs.webSearch(this)
+        btnWeb.text = if (on) "联网 ✓" else "联网"
+        btnWeb.setTextColor(getColor(if (on) R.color.accent else R.color.ink_soft))
+    }
+
+    /** 回答下面列出引用的来源，点标题用浏览器打开 */
+    private fun addSourcesView(list: List<AiClient.SearchHit>) {
+        val sb = SpannableStringBuilder("来源")
+        sb.setSpan(StyleSpan(Typeface.BOLD), 0, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        sb.setSpan(ForegroundColorSpan(getColor(R.color.accent)), 0, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val linkColor = getColor(R.color.accent)
+        for (h in list) {
+            sb.append("\n[").append(h.index.toString()).append("] ")
+            val start = sb.length
+            sb.append(h.title.ifBlank { h.url })
+            val url = h.url
+            sb.setSpan(object : ClickableSpan() {
+                override fun onClick(widget: View) = openUrl(url)
+                override fun updateDrawState(ds: TextPaint) {
+                    ds.color = linkColor
+                    ds.isUnderlineText = false
+                }
+            }, start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            val meta = listOf(h.site, h.date.take(10)).filter { it.isNotBlank() }.joinToString(" · ")
+            if (meta.isNotEmpty()) sb.append("  ").append(meta)
+        }
+        val tv = TextView(ui).apply {
+            text = sb
+            setTextColor(getColor(R.color.ink_soft))
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
+            setLineSpacing(dp(3).toFloat(), 1f)
+            movementMethod = LinkMovementMethod.getInstance()
+            highlightColor = android.graphics.Color.TRANSPARENT
+        }
+        thread.addView(tv, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+        ).apply { topMargin = dp(6) })
+    }
+
+    private fun openUrl(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            minimizePanel() // 收起浮窗，免得挡住网页
+        } catch (_: Exception) {
+            copyText(url)
+            toast("没有可用的浏览器，网址已复制")
+        }
     }
 
     private fun finishAnswer(error: String?, stopped: Boolean) {
@@ -1427,8 +1514,12 @@ class FloatService : Service() {
                 status.text = "已停止"
                 if (text.isBlank()) av?.text = "（已停止）"
             }
-            else -> status.text = ""
+            else -> {
+                status.text = ""
+                pendingSources?.takeIf { it.isNotEmpty() && text.isNotBlank() }?.let { addSourcesView(it) }
+            }
         }
+        pendingSources = null
         scroll.post { scroll.scrollTo(0, body.height) }
     }
 

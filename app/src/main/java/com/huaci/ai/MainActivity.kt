@@ -66,6 +66,10 @@ class MainActivity : Activity() {
         deepseekBox = findViewById(R.id.deepseekBox)
         deepThink = findViewById(R.id.deepThink)
         deepThink.isChecked = Prefs.deepThink(this)
+        findViewById<CheckBox>(R.id.webSearch).apply {
+            isChecked = Prefs.webSearch(this@MainActivity)
+            setOnCheckedChangeListener { _, on -> Prefs.setWebSearch(this@MainActivity, on) }
+        }
         findViewById<TextView>(R.id.pickFlash).setOnClickListener { model.setText("deepseek-flash") }
         findViewById<TextView>(R.id.pickPro).setOnClickListener { model.setText("deepseek-v4-pro") }
 

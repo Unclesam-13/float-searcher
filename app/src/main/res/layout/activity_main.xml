@@ -206,6 +206,25 @@
                 </LinearLayout>
 
                 <CheckBox
+                    android:id="@+id/webSearch"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:buttonTint="@color/accent"
+                    android:text="联网搜索：需要最新信息时自动搜索，回答附来源"
+                    android:textColor="@color/ink"
+                    android:textSize="14sp" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="32dp"
+                    android:lineSpacingExtra="3dp"
+                    android:text="AI 自己判断要不要搜、搜什么，最多 3 次。浮窗里的「联网」按钮可随时开关。联网时不使用深度思考；每次搜索按 DeepSeek 价格计费（约 0.75 美元 / 1000 次）。"
+                    android:textColor="@color/ink_soft"
+                    android:textSize="12sp" />
+
+                <CheckBox
                     android:id="@+id/deepThink"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"

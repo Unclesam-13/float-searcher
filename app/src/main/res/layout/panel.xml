@@ -307,6 +307,13 @@
                 android:visibility="gone" />
 
             <TextView
+                android:id="@+id/btnWeb"
+                style="@style/PanelIconBtn"
+                android:contentDescription="DeepSeek 联网搜索开关"
+                android:text="联网"
+                android:visibility="gone" />
+
+            <TextView
                 android:id="@+id/btnCopy"
                 style="@style/PanelIconBtn"
                 android:text="复制" />
