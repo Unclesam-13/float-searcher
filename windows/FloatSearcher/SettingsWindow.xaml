@@ -148,7 +148,10 @@
                                 <Button x:Name="PickFlash" Content="deepseek-flash · 快又省" Style="{StaticResource Btn}" Margin="0,0,8,0" />
                                 <Button x:Name="PickPro" Content="deepseek-v4-pro · 更强" Style="{StaticResource Btn}" />
                             </StackPanel>
-                            <CheckBox x:Name="DeepThink" Content="AI 对话时开启深度思考（更准，但要多等一会儿；中译英总是关闭）" />
+                            <CheckBox x:Name="WebSearchBox" Content="联网搜索（AI 对话、剪贴板）：需要最新信息时自动搜索，回答附来源" />
+                            <TextBlock Style="{StaticResource Hint}" Margin="22,2,0,0"
+                                       Text="AI 自己判断要不要搜、搜什么，最多搜 3 次。输入窗里的「联网」按钮也能随时开关。联网时不使用深度思考。每次搜索按 DeepSeek 的价格计费（约 0.75 美元 / 1000 次）。" />
+                            <CheckBox x:Name="DeepThink" Content="AI 对话时开启深度思考（更准，但要多等一会儿；中译英和联网时总是关闭）" />
                         </StackPanel>
 
                         <StackPanel Orientation="Horizontal" Margin="0,12,0,0">

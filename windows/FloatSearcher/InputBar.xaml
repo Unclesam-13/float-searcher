@@ -119,6 +119,8 @@
                 </Grid>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top" Margin="6,0,0,0">
+                    <Button x:Name="WebBtn" Content="联网" Style="{StaticResource FlatBtn}"
+                            ToolTip="DeepSeek 联网搜索：需要最新信息时自动搜索，回答附来源" Visibility="Collapsed" />
                     <Button x:Name="NewBtn" Content="新对话" Style="{StaticResource FlatBtn}"
                             ToolTip="清空这段对话，重新开始" Visibility="Collapsed" />
                     <Button x:Name="SendBtn" Content="↵" Style="{StaticResource AccentBtn}"

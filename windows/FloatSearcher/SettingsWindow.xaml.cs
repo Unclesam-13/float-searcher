@@ -39,6 +39,7 @@ namespace FloatSearcher
             ApiKey.Password = s.ApiKey;
             ModelBox.Text = string.IsNullOrWhiteSpace(s.Model) ? Providers.DefaultModel(s.Provider) : s.Model;
             DeepThink.IsChecked = s.DeepThink;
+            WebSearchBox.IsChecked = s.WebSearch;
             UpdateProviderHint();
 
             for (int i = 1; i <= 6; i++) TrSynCount.Items.Add(i.ToString());
@@ -101,6 +102,7 @@ namespace FloatSearcher
             s.ApiKey = ApiKey.Password.Trim();
             s.Model = ModelBox.Text.Trim();
             s.DeepThink = DeepThink.IsChecked == true;
+            s.WebSearch = WebSearchBox.IsChecked == true;
 
             s.TrSynonyms = TrSyn.IsChecked == true;
             s.TrSynonymCount = TrSynCount.SelectedIndex + 1;

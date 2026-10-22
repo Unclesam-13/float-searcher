@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.Windows.Documents;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -47,6 +49,13 @@ namespace FloatSearcher
             SendBtn.Click += (s, e) => { if (_busy) { StopAnswer(); SetStatus("已停止"); } else Submit(); };
             CloseBtn.Click += (s, e) => HideBar();
             NewBtn.Click += (s, e) => NewConversation();
+            WebBtn.Click += (s, e) =>
+            {
+                App.Settings.WebSearch = !App.Settings.WebSearch;
+                App.Settings.Save();
+                UpdateWebBtn();
+                SetStatus(App.Settings.WebSearch ? "已开启联网：需要时会先搜索，回答附来源" : "已关闭联网");
+            };
             ClipCard.MouseLeftButtonUp += (s, e) =>
             {
                 _clipExpanded = !_clipExpanded;
@@ -115,6 +124,7 @@ namespace FloatSearcher
             ChatPanel.Visibility = m == Mode.Chat ? Visibility.Visible : Visibility.Collapsed;
             ClipPanel.Visibility = m == Mode.Clipboard ? Visibility.Visible : Visibility.Collapsed;
             NewBtn.Visibility = m == Mode.Translate ? Visibility.Collapsed : Visibility.Visible;
+            UpdateWebBtn();
             OutScroll.MaxHeight = m == Mode.Translate ? 320 : 440;
             ClipCard.Visibility = Visibility.Collapsed;
             Chips.Visibility = Visibility.Collapsed;
@@ -421,6 +431,21 @@ namespace FloatSearcher
             ScrollToEnd();
 
             var acc = new StringBuilder();
+            List<SearchHit> sources = null;
+            WebCallbacks web = null;
+            if (WebAvailable && App.Settings.WebSearch)
+            {
+                web = new WebCallbacks
+                {
+                    OnSearch = q =>
+                    {
+                        if (acc.Length == 0) { answerBox.Foreground = App.Brush("InkSoft"); answerBox.Text = "正在搜索：" + q + " …"; }
+                        if (gen == _gen) SetStatus("正在联网搜索：" + q);
+                    },
+                    OnReset = () => { acc.Clear(); },
+                    OnSources = list => sources = list,
+                };
+            }
             try
             {
                 var full = await _ai.StreamAsync(App.Settings, system, history.ToArray(),
@@ -431,7 +456,8 @@ namespace FloatSearcher
                         answerBox.Text = CleanMd(acc.ToString());
                         if (gen == _gen) { SetStatus("正在回答…"); ScrollToEnd(); }
                     },
-                    onThinking: n => { if (gen == _gen && acc.Length == 0) SetStatus($"深度思考中…（已想 {n} 字）"); });
+                    onThinking: n => { if (gen == _gen && acc.Length == 0) SetStatus($"深度思考中…（已想 {n} 字）"); },
+                    web: web);
                 if (string.IsNullOrWhiteSpace(full))
                 {
                     answerBox.Text = "（没有收到回答）";
@@ -441,6 +467,7 @@ namespace FloatSearcher
                 {
                     answerBox.Text = CleanMd(full);
                     Settle(history, userMsg, full);
+                    if (sources != null && sources.Count > 0) AddSources(panel, answerBox, sources);
                 }
                 if (gen == _gen) SetStatus(null);
             }
@@ -469,6 +496,52 @@ namespace FloatSearcher
                     ScrollToEnd();
                 }
             }
+        }
+
+        /// <summary>只有 DeepSeek 接口能联网</summary>
+        static bool WebAvailable => App.Settings.Provider == Providers.DeepSeek;
+
+        void UpdateWebBtn()
+        {
+            bool show = _mode != Mode.Translate && WebAvailable;
+            WebBtn.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
+            bool on = App.Settings.WebSearch;
+            WebBtn.Content = on ? "联网 ✓" : "联网";
+            WebBtn.Foreground = App.Brush(on ? "Accent" : "InkSoft");
+            WebBtn.FontWeight = on ? FontWeights.SemiBold : FontWeights.Normal;
+        }
+
+        /// <summary>在回答下面列出引用的来源，点标题用浏览器打开</summary>
+        void AddSources(StackPanel panel, TextBox answerBox, List<SearchHit> sources)
+        {
+            var box = new StackPanel { Margin = new Thickness(4, 6, 0, 0) };
+            box.Children.Add(new TextBlock { Text = "来源", FontSize = 11.5, FontWeight = FontWeights.SemiBold, Foreground = App.Brush("Accent") });
+            foreach (var h in sources)
+            {
+                var tb = new TextBlock { FontSize = 12.5, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 0), Foreground = App.Brush("InkSoft") };
+                tb.Inlines.Add(new Run("[" + h.Index + "] "));
+                var link = new Hyperlink(new Run(string.IsNullOrWhiteSpace(h.Title) ? h.Url : h.Title))
+                {
+                    Foreground = App.Brush("Accent"),
+                    TextDecorations = null,
+                    Cursor = Cursors.Hand,
+                    ToolTip = h.Url,
+                };
+                var url = h.Url;
+                link.Click += (s, e) =>
+                {
+                    try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+                    catch { CopyText(url); }
+                };
+                tb.Inlines.Add(link);
+                var meta = h.Site;
+                if (!string.IsNullOrEmpty(h.Date) && h.Date.Length >= 10) meta = (meta.Length > 0 ? meta + " · " : "") + h.Date.Substring(0, 10);
+                if (meta.Length > 0) tb.Inlines.Add(new Run("  " + meta));
+                box.Children.Add(tb);
+            }
+            int idx = panel.Children.IndexOf(answerBox.Parent as UIElement);
+            if (idx >= 0) panel.Children.Insert(idx + 1, box);
+            else panel.Children.Add(box);
         }
 
         /// <summary>

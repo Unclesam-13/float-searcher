@@ -22,6 +22,8 @@ namespace FloatSearcher
         public string ApiKey { get; set; } = "";
         public string Model { get; set; } = "";
         public bool DeepThink { get; set; } = false;
+        /// <summary>DeepSeek 联网搜索（AI 对话、剪贴板模式）</summary>
+        public bool WebSearch { get; set; } = true;
 
         // ---- 当前模式（扇形菜单里选的，下次还是它） ----
         public Mode Mode { get; set; } = Mode.Translate;
