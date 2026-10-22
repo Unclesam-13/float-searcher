@@ -62,6 +62,12 @@ object Prefs {
         sp(c).edit().putInt("pw$k", w).putInt("ph$k", h).apply()
     }
 
+    /** 点悬浮球打开什么：完整助手，或「中译英速查」小输入框 */
+    const val MODE_FULL = "full"
+    const val MODE_QUICK = "quick"
+    fun mode(c: Context): String = sp(c).getString("mode", MODE_FULL) ?: MODE_FULL
+    fun setMode(c: Context, m: String) { sp(c).edit().putString("mode", m).apply() }
+
     /** 打开浮窗时检查剪贴板（默认开） */
     fun clipCheck(c: Context): Boolean = sp(c).getBoolean("clipCheck", true)
     fun setClipCheck(c: Context, on: Boolean) { sp(c).edit().putBoolean("clipCheck", on).apply() }

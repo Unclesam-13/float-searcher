@@ -1,0 +1,84 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 中译英速查：只有一个输入框，回车后在下面显示译文 -->
+<com.huaci.ai.PanelRoot xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_panel"
+    android:padding="8dp">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_input"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingEnd="10dp">
+
+            <EditText
+                android:id="@+id/quickInput"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:background="@android:color/transparent"
+                android:hint="输入中文，按回车翻译成英文"
+                android:imeOptions="actionSearch|flagNoExtractUi"
+                android:inputType="text"
+                android:maxLines="4"
+                android:minHeight="46dp"
+                android:paddingStart="14dp"
+                android:paddingTop="10dp"
+                android:paddingEnd="6dp"
+                android:paddingBottom="10dp"
+                android:textColor="@color/ink"
+                android:textColorHint="@color/ink_soft"
+                android:textSize="16sp" />
+
+            <ProgressBar
+                android:id="@+id/quickBusy"
+                style="?android:attr/progressBarStyleSmall"
+                android:layout_width="20dp"
+                android:layout_height="20dp"
+                android:indeterminateTint="@color/accent"
+                android:visibility="gone" />
+        </LinearLayout>
+
+        <com.huaci.ai.MaxHeightScrollView
+            android:id="@+id/quickScroll"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fadeScrollbars="true"
+            android:overScrollMode="ifContentScrolls"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/quickResult"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_btn_plain"
+                android:lineSpacingExtra="3dp"
+                android:paddingStart="14dp"
+                android:paddingTop="10dp"
+                android:paddingEnd="14dp"
+                android:paddingBottom="4dp"
+                android:textColor="@color/ink"
+                android:textSize="18sp" />
+        </com.huaci.ai.MaxHeightScrollView>
+
+        <TextView
+            android:id="@+id/quickHint"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:paddingStart="14dp"
+            android:paddingEnd="14dp"
+            android:paddingBottom="4dp"
+            android:text="点译文复制"
+            android:textColor="@color/ink_soft"
+            android:textSize="11sp"
+            android:visibility="gone" />
+    </LinearLayout>
+</com.huaci.ai.PanelRoot>

@@ -29,6 +29,7 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.ViewConfiguration
 import android.view.WindowManager
+import android.view.KeyEvent
 import android.view.inputmethod.InputMethodManager
 import android.widget.EditText
 import android.widget.ImageView
@@ -108,6 +109,23 @@ class FloatService : Service() {
     private lateinit var scanOk: View
     private lateinit var scanCancel: View
     private var savedPanelGeo: IntArray? = null // 进取景框前浮窗的 x, y, w, h
+
+    // 中译英速查
+    private val quickAi by lazy { AiClient(this) }
+    private var quick: PanelRoot? = null
+    private var quickLp: WindowManager.LayoutParams? = null
+    private var quickShown = false
+    private lateinit var quickInput: EditText
+    private lateinit var quickResult: TextView
+    private lateinit var quickScroll: MaxHeightScrollView
+    private lateinit var quickBusy: View
+    private lateinit var quickHint: TextView
+    private var quickAnswer = ""
+    private var quickAsked = ""
+    private var quickBusyNow = false
+    private val quickCache = object : LinkedHashMap<String, String>(32, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 60
+    }
 
     // 剪贴板检测
     private val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
@@ -201,6 +219,12 @@ class FloatService : Service() {
             applySavedPanelGeometry(lp, resetPosition = true)
             safeUpdate(p, lp)
         }
+        val q = quick
+        val qlp = quickLp
+        if (q != null && qlp != null && quickShown) {
+            placeQuick(qlp)
+            safeUpdate(q, qlp)
+        }
         val b = bubble
         val blp = bubbleLp
         if (b != null && blp != null) {
@@ -221,6 +245,8 @@ class FloatService : Service() {
         capture.release()
         try { recognizer.close() } catch (_: Exception) {}
         removeSafely(panel, panelShown); panelShown = false
+        if (quick != null) quickAi.cancel()
+        removeSafely(quick, quickShown); quickShown = false
         removeSafely(bubble, bubbleShown); bubbleShown = false
         super.onDestroy()
     }
@@ -340,7 +366,7 @@ class FloatService : Service() {
                     v.alpha = 0.92f
                     if (longFired) Unit
                     else if (dragging) snapBubbleToEdge(v, lp)
-                    else if (e.actionMasked == MotionEvent.ACTION_UP) { v.performClick(); openPanel(null) }
+                    else if (e.actionMasked == MotionEvent.ACTION_UP) { v.performClick(); onBubbleTap() }
                 }
             }
             true
@@ -385,6 +411,196 @@ class FloatService : Service() {
         }
     }
 
+    // ================= 中译英速查 =================
+
+    /** 点悬浮球：按设置里选的模式打开 */
+    private fun onBubbleTap() {
+        if (Prefs.mode(this) == Prefs.MODE_QUICK) openQuick() else openPanel(null)
+    }
+
+    private fun buildQuick() {
+        val root = LayoutInflater.from(ui).inflate(R.layout.quick, null) as PanelRoot
+        quick = root
+        quickInput = root.findViewById(R.id.quickInput)
+        quickResult = root.findViewById(R.id.quickResult)
+        quickScroll = root.findViewById(R.id.quickScroll)
+        quickBusy = root.findViewById(R.id.quickBusy)
+        quickHint = root.findViewById(R.id.quickHint)
+
+        // 单行输入（回车 = 翻译），但长句子可以折行显示
+        quickInput.setHorizontallyScrolling(false)
+        quickInput.maxLines = 4
+        quickInput.setOnEditorActionListener { _, _, event ->
+            // 输入法的「搜索/完成」键：event 为空；物理回车：只认按下那一次
+            if (event == null ||
+                (event.keyCode == KeyEvent.KEYCODE_ENTER && event.action == KeyEvent.ACTION_DOWN)) {
+                quickTranslate()
+            }
+            true
+        }
+        quickResult.setOnClickListener {
+            if (quickBusyNow || quickAnswer.isBlank()) return@setOnClickListener
+            // 只复制主译法（不带「也可：」那行）
+            val main = quickAnswer.lines()
+                .takeWhile { !it.trimStart().startsWith("也可") }
+                .joinToString("\n").trim().ifBlank { quickAnswer.trim() }
+            copyText(main)
+            quickHint.text = "已复制"
+            quickHint.postDelayed({ if (!quickBusyNow && quickAnswer.isNotBlank()) quickHint.text = "点译文复制" }, 1500)
+        }
+        root.onBack = { closeQuick() }
+        root.onOutsideTouch = { closeQuick() }
+    }
+
+    private fun quickParams() = WindowManager.LayoutParams(
+        dp(300), WindowManager.LayoutParams.WRAP_CONTENT,
+        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+        WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH or
+            WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+        PixelFormat.TRANSLUCENT
+    ).apply {
+        gravity = Gravity.TOP or Gravity.START
+        // 一拿到焦点就弹出键盘
+        softInputMode = WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or
+            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING
+    }
+
+    /** 放在屏幕上方，避开键盘；横屏时窄一点 */
+    private fun placeQuick(lp: WindowManager.LayoutParams) {
+        val land = isLandscape()
+        lp.width = if (land) min(dp(520), (screenW() * 0.6f).toInt()) else screenW() - dp(20)
+        lp.x = (screenW() - lp.width) / 2
+        lp.y = if (land) dp(8) else statusBarH() + dp(8)
+        quickScroll.maxHeightPx = (screenH() * if (land) 0.2f else 0.3f).toInt().coerceAtLeast(dp(60))
+    }
+
+    private fun openQuick() {
+        if (capturing) return
+        if (quick == null) buildQuick()
+        val q = quick ?: return
+        val lp = quickLp ?: quickParams().also { quickLp = it }
+        placeQuick(lp)
+        lp.alpha = Prefs.panelAlpha(this)
+        if (!quickShown) {
+            if (!addWindow(q, lp)) return
+            quickShown = true
+        } else safeUpdate(q, lp)
+        hideBubble()
+        hideClipChip()
+        showQuickKeyboard()
+    }
+
+    private fun showQuickKeyboard() {
+        val imm = getSystemService(InputMethodManager::class.java)
+        val show = Runnable {
+            if (!quickShown) return@Runnable
+            quickInput.requestFocus()
+            imm.showSoftInput(quickInput, 0)
+        }
+        // 窗口拿到焦点有时慢一点：多试一次
+        quickInput.postDelayed(show, 80)
+        quickInput.postDelayed(show, 320)
+    }
+
+    /** 关掉速查框，回到悬浮球；下次打开是空的输入框 */
+    private fun closeQuick() {
+        if (!quickShown) return
+        getSystemService(InputMethodManager::class.java).hideSoftInputFromWindow(quickInput.windowToken, 0)
+        quickAi.cancel()
+        setQuickBusy(false)
+        quickInput.setText("")
+        quickAnswer = ""; quickAsked = ""
+        quickScroll.visibility = View.GONE
+        quickHint.visibility = View.GONE
+        removeSafely(quick, quickShown)
+        quickShown = false
+        showBubble()
+    }
+
+    private fun setQuickBusy(on: Boolean) {
+        quickBusyNow = on
+        if (quick != null) quickBusy.visibility = if (on) View.VISIBLE else View.GONE
+    }
+
+    private fun quickTranslate() {
+        val text = quickInput.text.toString().trim()
+        if (text.isEmpty()) return
+        if (quickBusyNow && text == quickAsked) return
+        quickAsked = text
+
+        quickCache[text]?.let { cached ->
+            quickAi.cancel(); setQuickBusy(false)
+            showQuickResult(cached, done = true)
+            quickInput.selectAll()
+            return
+        }
+
+        quickAnswer = ""
+        setQuickBusy(true)
+        quickScroll.visibility = View.VISIBLE
+        quickResult.setTextColor(getColor(R.color.ink_soft))
+        quickResult.text = "翻译中…"
+        quickHint.visibility = View.GONE
+        val sb = StringBuilder()
+        quickAi.stream(
+            listOf(AiClient.Msg("user", text)),
+            onDelta = { piece ->
+                sb.append(piece)
+                showQuickResult(sb.toString(), done = false)
+            },
+            onDone = {
+                setQuickBusy(false)
+                val r = cleanTranslation(sb.toString())
+                if (r.isBlank()) {
+                    quickResult.setTextColor(getColor(R.color.danger))
+                    quickResult.text = "没有拿到译文，再按一次回车试试"
+                } else {
+                    quickCache[text] = r
+                    showQuickResult(r, done = true)
+                }
+                // 选中原文：直接打字就会替换，接着查下一个
+                quickInput.selectAll()
+            },
+            onError = { msg ->
+                setQuickBusy(false)
+                quickAnswer = ""
+                quickResult.setTextColor(getColor(R.color.danger))
+                quickResult.text = msg
+                quickHint.visibility = View.GONE
+            },
+            system = AiClient.TRANSLATE_PROMPT,
+            noThinking = true,
+        )
+    }
+
+    private fun showQuickResult(t: String, done: Boolean) {
+        val shown = cleanTranslation(t)
+        quickAnswer = shown
+        quickScroll.visibility = View.VISIBLE
+        quickResult.setTextColor(getColor(R.color.ink))
+        quickResult.text = shown.ifBlank { "翻译中…" }
+        if (done) {
+            quickHint.text = "点译文复制"
+            quickHint.visibility = View.VISIBLE
+        }
+    }
+
+    /** 去掉模型偶尔加的引号、前缀 */
+    private fun cleanTranslation(t: String): String {
+        var s = t.trim()
+        for (p in listOf("译文：", "译文:", "Translation:", "英文：", "英文:")) {
+            if (s.startsWith(p, ignoreCase = true)) s = s.substring(p.length).trim()
+        }
+        val pairs = listOf('"' to '"', '“' to '”', '「' to '」', '\'' to '\'')
+        for ((a, b) in pairs) {
+            if (s.length >= 2 && s.first() == a && s.last() == b && s.count { it == a || it == b } <= 2) {
+                s = s.substring(1, s.length - 1).trim()
+            }
+        }
+        return s.replace("**", "")
+    }
+
     // ================= 剪贴板检测 =================
 
     /** 无障碍服务发现用户刚点了「复制」 */
@@ -401,7 +617,7 @@ class FloatService : Service() {
     }
 
     private fun handleClip(text: String?, fromCopy: Boolean) {
-        if (!running || text.isNullOrBlank()) return
+        if (!running || text.isNullOrBlank() || quickShown) return
         if (text.hashCode() == Prefs.lastClip(this)) return // 提示过了
         if (text == selected.trim()) { markClipSeen(text); return }
         if (panelShown) showClipCard(text)

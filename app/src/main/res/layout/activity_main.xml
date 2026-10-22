@@ -31,6 +31,53 @@
             android:textColor="@color/ink_soft"
             android:textSize="14sp" />
 
+        <!-- 点悬浮球打开什么 -->
+        <LinearLayout style="@style/Card">
+
+            <TextView
+                style="@style/CardTitle"
+                android:text="悬浮球模式" />
+
+            <RadioGroup
+                android:id="@+id/modeGroup"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="vertical">
+
+                <RadioButton
+                    android:id="@+id/modeFull"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:buttonTint="@color/accent"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:text="完整助手\n点悬浮球打开问答浮窗：预设问题、截屏、识字、追问"
+                    android:textColor="@color/ink"
+                    android:textSize="14sp" />
+
+                <RadioButton
+                    android:id="@+id/modeQuick"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:buttonTint="@color/accent"
+                    android:paddingTop="6dp"
+                    android:paddingBottom="6dp"
+                    android:text="中译英速查\n点悬浮球只弹出一个输入框和键盘，打中文按回车，直接出英文"
+                    android:textColor="@color/ink"
+                    android:textSize="14sp" />
+            </RadioGroup>
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="6dp"
+                android:lineSpacingExtra="3dp"
+                android:text="切换后马上生效。速查模式下，划词「问 AI」、长按悬浮球截屏、点通知栏，仍然打开完整浮窗。"
+                android:textColor="@color/ink_soft"
+                android:textSize="12sp" />
+        </LinearLayout>
+
         <!-- 第 1 步：权限 -->
         <LinearLayout style="@style/Card">
 
@@ -321,7 +368,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="8dp"
                 android:lineSpacingExtra="5dp"
-                android:text="• 在浏览器、阅读器、聊天软件里长按选中文字，在弹出的菜单里点「问 AI」（有的机型要先点「⋮ 更多」）。\n• 浮窗出现在屏幕最上层：点预设一键提问，或在底部输入框追问。\n• 截屏：点浮窗右上角「截屏」，或长按悬浮球。第一次要在系统弹窗里点「立即开始」，之后几分钟内不用再确认。拖动选框选区域、拖角调大小，点「放进对话框」后就能对截图提问。\n• 放大镜识字：点浮窗的「识字」，浮窗变成虚线取景框：拖框内部移动，拖边或角改大小，点「识别」识别框里的文字，点「✕」退出。快捷用法：长按标题栏直接拖到文字上，松手就识别。离线识别，不花 API 额度。\n• 按住浮窗标题栏可以拖动；拖右下角 ◢ 改大小（横屏、竖屏分别记住）；点「调节」改透明度。点「—」变回悬浮球，点悬浮球再展开。\n• 剪贴板：复制了文字再点悬浮球，浮窗顶部会出现「用这段」；打开下面的「复制后自动提示」后，复制完悬浮球旁会直接弹出「问 AI」。\n• 微信等不显示「问 AI」的 App：选中后点「分享」→ 划词助手，或先复制，再点浮窗里的「粘贴」。\n• 国产系统（小米、华为、OPPO、vivo）请在设置里允许本 App 后台运行和自启动，否则悬浮球可能被系统清掉。"
+                android:text="• 在浏览器、阅读器、聊天软件里长按选中文字，在弹出的菜单里点「问 AI」（有的机型要先点「⋮ 更多」）。\n• 浮窗出现在屏幕最上层：点预设一键提问，或在底部输入框追问。\n• 截屏：点浮窗右上角「截屏」，或长按悬浮球。第一次要在系统弹窗里点「立即开始」，之后几分钟内不用再确认。拖动选框选区域、拖角调大小，点「放进对话框」后就能对截图提问。\n• 放大镜识字：点浮窗的「识字」，浮窗变成虚线取景框：拖框内部移动，拖边或角改大小，点「识别」识别框里的文字，点「✕」退出。快捷用法：长按标题栏直接拖到文字上，松手就识别。离线识别，不花 API 额度。\n• 按住浮窗标题栏可以拖动；拖右下角 ◢ 改大小（横屏、竖屏分别记住）；点「调节」改透明度。点「—」变回悬浮球，点悬浮球再展开。\n• 中译英速查：在最上面的「悬浮球模式」选它，点悬浮球就只弹出输入框，打中文按回车出英文（输入英文会翻成中文）；点译文复制，点框外或按返回关掉。\n• 剪贴板：复制了文字再点悬浮球，浮窗顶部会出现「用这段」；打开下面的「复制后自动提示」后，复制完悬浮球旁会直接弹出「问 AI」。\n• 微信等不显示「问 AI」的 App：选中后点「分享」→ 划词助手，或先复制，再点浮窗里的「粘贴」。\n• 国产系统（小米、华为、OPPO、vivo）请在设置里允许本 App 后台运行和自启动，否则悬浮球可能被系统清掉。"
                 android:textColor="@color/ink_soft"
                 android:textSize="14sp" />
         </LinearLayout>

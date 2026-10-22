@@ -46,6 +46,14 @@ class MainActivity : Activity() {
         presets = findViewById(R.id.presets)
         autoRun = findViewById(R.id.autoRun)
         testResult = findViewById(R.id.testResult)
+        findViewById<RadioGroup>(R.id.modeGroup).apply {
+            check(if (Prefs.mode(this@MainActivity) == Prefs.MODE_QUICK) R.id.modeQuick else R.id.modeFull)
+            setOnCheckedChangeListener { _, id ->
+                val quick = id == R.id.modeQuick
+                Prefs.setMode(this@MainActivity, if (quick) Prefs.MODE_QUICK else Prefs.MODE_FULL)
+                toast(if (quick) "已切换到中译英速查" else "已切换到完整助手")
+            }
+        }
         clipWatchStatus = findViewById(R.id.clipWatchStatus)
         findViewById<CheckBox>(R.id.clipCheck).apply {
             isChecked = Prefs.clipCheck(this@MainActivity)
