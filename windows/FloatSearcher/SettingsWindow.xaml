@@ -1,0 +1,244 @@
+<Window x:Class="FloatSearcher.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="划词助手 · 设置"
+        Width="600" Height="760" MinWidth="480" MinHeight="400"
+        WindowStartupLocation="CenterScreen"
+        Background="{DynamicResource Bg}" Foreground="{DynamicResource Ink}"
+        FontFamily="{DynamicResource UiFont}" FontSize="13.5"
+        UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
+
+    <Window.Resources>
+        <Style x:Key="Card" TargetType="Border">
+            <Setter Property="Background" Value="{DynamicResource Surface}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Line}" />
+            <Setter Property="BorderThickness" Value="1" />
+            <Setter Property="CornerRadius" Value="14" />
+            <Setter Property="Padding" Value="18,14" />
+            <Setter Property="Margin" Value="0,0,0,14" />
+        </Style>
+        <Style x:Key="H" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="16" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+            <Setter Property="Margin" Value="0,0,0,8" />
+        </Style>
+        <Style x:Key="Label" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource InkSoft}" />
+            <Setter Property="FontSize" Value="12.5" />
+            <Setter Property="Margin" Value="0,10,0,4" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style x:Key="Hint" TargetType="TextBlock">
+            <Setter Property="Foreground" Value="{DynamicResource InkSoft}" />
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Margin" Value="0,4,0,0" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{DynamicResource Surface2}" />
+            <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Line}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource Accent}" />
+            <Setter Property="Padding" Value="8,6" />
+            <Setter Property="BorderThickness" Value="1" />
+        </Style>
+        <Style TargetType="PasswordBox">
+            <Setter Property="Background" Value="{DynamicResource Surface2}" />
+            <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+            <Setter Property="BorderBrush" Value="{DynamicResource Line}" />
+            <Setter Property="CaretBrush" Value="{DynamicResource Accent}" />
+            <Setter Property="Padding" Value="8,6" />
+        </Style>
+        <Style TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+            <Setter Property="Margin" Value="0,6,0,0" />
+        </Style>
+        <Style TargetType="RadioButton">
+            <Setter Property="Foreground" Value="{DynamicResource Ink}" />
+            <Setter Property="Margin" Value="0,6,18,0" />
+        </Style>
+        <Style x:Key="Btn" TargetType="Button">
+            <Setter Property="Foreground" Value="{DynamicResource Accent}" />
+            <Setter Property="Background" Value="{DynamicResource Surface2}" />
+            <Setter Property="Cursor" Value="Hand" />
+            <Setter Property="Padding" Value="14,0" />
+            <Setter Property="Height" Value="32" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="16"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentSoft}" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style x:Key="PrimaryBtn" TargetType="Button" BasedOn="{StaticResource Btn}">
+            <Setter Property="Foreground" Value="{DynamicResource AccentInk}" />
+            <Setter Property="Background" Value="{DynamicResource Accent}" />
+            <Setter Property="FontWeight" Value="Bold" />
+            <Setter Property="Height" Value="38" />
+            <Setter Property="Padding" Value="26,0" />
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="19"
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.85" />
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <DockPanel>
+        <!-- 底部：保存 -->
+        <Border DockPanel.Dock="Bottom" Background="{DynamicResource Surface}"
+                BorderBrush="{DynamicResource Line}" BorderThickness="0,1,0,0" Padding="18,10">
+            <DockPanel>
+                <TextBlock x:Name="SavedHint" VerticalAlignment="Center" Foreground="{DynamicResource InkSoft}"
+                           FontSize="12.5" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button x:Name="CancelBtn" Content="关闭" Style="{StaticResource Btn}" Margin="0,0,10,0" Height="38" />
+                    <Button x:Name="SaveBtn" Content="保存" Style="{StaticResource PrimaryBtn}" />
+                </StackPanel>
+            </DockPanel>
+        </Border>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="18,16,18,4">
+
+                <TextBlock Text="划词助手" FontSize="24" FontWeight="Bold" />
+                <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,14"
+                           Text="鼠标移到悬浮图标上会展开三个选项：中→英、AI 对话、剪贴板。选好后单击图标，旁边会横向弹出输入窗。右键图标可以打开这里或退出。" />
+
+                <!-- 接口 -->
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H}" Text="AI 接口" />
+                        <WrapPanel>
+                            <RadioButton x:Name="PDeepSeek" Content="DeepSeek" GroupName="prov" />
+                            <RadioButton x:Name="PClaude" Content="Claude" GroupName="prov" />
+                            <RadioButton x:Name="POpenAI" Content="其他兼容接口" GroupName="prov" />
+                        </WrapPanel>
+                        <TextBlock x:Name="ProvHint" Style="{StaticResource Hint}" />
+
+                        <TextBlock Style="{StaticResource Label}" Text="接口地址（留空用默认）" />
+                        <TextBox x:Name="BaseUrl" />
+                        <TextBlock Style="{StaticResource Label}" Text="API Key" />
+                        <PasswordBox x:Name="ApiKey" />
+                        <TextBlock Style="{StaticResource Label}" Text="模型" />
+                        <TextBox x:Name="ModelBox" />
+
+                        <StackPanel x:Name="DeepSeekBox" Orientation="Vertical">
+                            <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                <Button x:Name="PickFlash" Content="deepseek-flash · 快又省" Style="{StaticResource Btn}" Margin="0,0,8,0" />
+                                <Button x:Name="PickPro" Content="deepseek-v4-pro · 更强" Style="{StaticResource Btn}" />
+                            </StackPanel>
+                            <CheckBox x:Name="DeepThink" Content="AI 对话时开启深度思考（更准，但要多等一会儿；中译英总是关闭）" />
+                        </StackPanel>
+
+                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                            <Button x:Name="TestBtn" Content="测试连接" Style="{StaticResource Btn}" />
+                            <TextBlock x:Name="TestResult" VerticalAlignment="Center" Margin="12,0,0,0"
+                                       TextWrapping="Wrap" MaxWidth="380" FontSize="12.5" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+
+                <!-- 中译英 -->
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H}" Text="中 → 英" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,4"
+                                   Text="输入中文按回车出英文；输入英文会反过来翻成中文。第一行总是最常用的译法，下面这些可以按需加上。" />
+
+                        <StackPanel Orientation="Horizontal">
+                            <CheckBox x:Name="TrSyn" Content="词语：给出同义词，最多" VerticalAlignment="Center" />
+                            <ComboBox x:Name="TrSynCount" Width="56" Margin="8,6,6,0" VerticalAlignment="Center" />
+                            <TextBlock Text="个" VerticalAlignment="Center" Margin="0,6,0,0" />
+                        </StackPanel>
+
+                        <CheckBox x:Name="TrVar" Content="句子：给出不同的表达方式（句式 / 语气 / 语法）" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="22,4,0,4"
+                                   Text="每行一种，想要几种写几种。比如：日常口语、正式书面、简洁版、美式说法、英式说法、被动语态、强调句、倒装句、邮件用语。" />
+                        <TextBox x:Name="TrVarList" Margin="22,0,0,0" AcceptsReturn="True" TextWrapping="Wrap"
+                                 MinHeight="84" VerticalScrollBarVisibility="Auto" />
+
+                        <CheckBox x:Name="TrExample" Content="词语：附一个例句" />
+                        <CheckBox x:Name="TrGrammar" Content="附一句语法 / 用法说明" />
+
+                        <TextBlock Style="{StaticResource Label}" Text="其他要求（可留空）" />
+                        <TextBox x:Name="TrExtra" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="52"
+                                 VerticalScrollBarVisibility="Auto" />
+                        <TextBlock Style="{StaticResource Hint}" Text="例如：偏商务场合；尽量用简单词汇；专有名词保留原文。" />
+
+                        <CheckBox x:Name="TrAutoHide" Content="点到别处时自动收起输入窗" Margin="0,12,0,0" />
+                    </StackPanel>
+                </Border>
+
+                <!-- AI 对话 -->
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H}" Text="AI 对话" />
+                        <TextBlock Style="{StaticResource Label}" Margin="0,0,0,4" Text="给 AI 的固定说明（每次对话都会带上）" />
+                        <TextBox x:Name="ChatSystem" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="68"
+                                 VerticalScrollBarVisibility="Auto" />
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="回车发送，Shift+回车换行。对话会一直保留，点输入窗里的「新对话」或右键图标清空。" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 剪贴板 -->
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H}" Text="剪贴板" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,4"
+                                   Text="复制一段文字后单击悬浮图标，内容会自动放进对话。粘贴之后：" />
+                        <RadioButton x:Name="ClipAuto" GroupName="clip"
+                                     Content="自动用下面的提示词发送（最快）" />
+                        <TextBox x:Name="ClipPrompt" Margin="22,6,0,0" AcceptsReturn="True" TextWrapping="Wrap"
+                                 MinHeight="44" />
+                        <RadioButton x:Name="ClipAsk" GroupName="clip" Margin="0,10,0,0"
+                                     Content="先不发送，等我输入提示词再按回车" />
+
+                        <TextBlock Style="{StaticResource Label}"
+                                   Text="快捷提示词（输入窗里显示成按钮，点一下就对剪贴板内容提问）。每行一个：名称 | 要 AI 做什么" />
+                        <TextBox x:Name="ClipPresets" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="110"
+                                 VerticalScrollBarVisibility="Auto" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 通用 -->
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H}" Text="通用" />
+                        <CheckBox x:Name="AutoStart" Content="开机自动启动" />
+                        <TextBlock Style="{StaticResource Label}" Text="悬浮图标平时的透明度" />
+                        <DockPanel>
+                            <TextBlock x:Name="OpacityText" DockPanel.Dock="Right" Width="44" TextAlignment="Right"
+                                       VerticalAlignment="Center" Foreground="{DynamicResource InkSoft}" />
+                            <Slider x:Name="OpacitySlider" Minimum="0.3" Maximum="1" SmallChange="0.05"
+                                    LargeChange="0.1" VerticalAlignment="Center" />
+                        </DockPanel>
+                        <TextBlock Style="{StaticResource Hint}" Text="鼠标移上去时总是完全不透明。" />
+                    </StackPanel>
+                </Border>
+
+            </StackPanel>
+        </ScrollViewer>
+    </DockPanel>
+</Window>

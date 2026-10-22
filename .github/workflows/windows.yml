@@ -1,0 +1,44 @@
+# Windows 版：推送 windows/ 下的改动后自动编译成一个 exe，发布到 Releases。
+name: 编译 Windows 版
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "windows/**"
+      - ".github/workflows/windows.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: 编译
+        run: dotnet publish windows/FloatSearcher/FloatSearcher.csproj -c Release -o out
+
+      - name: 改名
+        shell: pwsh
+        run: Copy-Item out/FloatSearcher.exe "FloatSearcher-${{ github.run_number }}.exe"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: FloatSearcher-windows
+          path: FloatSearcher-${{ github.run_number }}.exe
+
+      - name: 发布到 Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: win-${{ github.run_number }}
+          name: 划词助手 Windows 第 ${{ github.run_number }} 版
+          body: 下载下面的 FloatSearcher-${{ github.run_number }}.exe，双击就能用，不需要安装（Windows 10 / 11，64 位）。第一次运行如果出现「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」。
+          files: FloatSearcher-${{ github.run_number }}.exe
