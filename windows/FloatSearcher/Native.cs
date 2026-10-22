@@ -40,6 +40,8 @@ namespace FloatSearcher
             try
             {
                 var src = PresentationSource.FromVisual(visual);
+                // 窗口还没显示时拿不到缩放比例：先用主屏工作区
+                if (src?.CompositionTarget == null) return SystemParameters.WorkArea;
                 Matrix toDev = src?.CompositionTarget?.TransformToDevice ?? Matrix.Identity;
                 Matrix fromDev = src?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
                 var dev = toDev.Transform(logicalPoint);

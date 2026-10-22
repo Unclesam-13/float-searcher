@@ -58,6 +58,12 @@ namespace FloatSearcher
             BubbleHost.MouseLeftButtonUp += OnUp;
             BubbleHost.MouseRightButtonUp += (s, e) => { e.Handled = true; ShowMenu(); };
 
+            // 先按上次的位置摆好，显示后再按所在屏幕校正
+            var st = App.Settings;
+            var wa0 = SystemParameters.WorkArea;
+            Left = (double.IsNaN(st.BubbleX) ? wa0.Right - 44 : st.BubbleX) - Half;
+            Top = (double.IsNaN(st.BubbleY) ? wa0.Top + wa0.Height * 0.4 : st.BubbleY) - Half;
+
             SourceInitialized += (s, e) => Native.HideFromAltTab(this);
             Loaded += (s, e) => { PlaceInitially(); RefreshMode(); };
         }
