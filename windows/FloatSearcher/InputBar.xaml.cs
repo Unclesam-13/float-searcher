@@ -24,6 +24,7 @@ namespace FloatSearcher
         readonly AiClient _ai = new AiClient();
         Mode _mode;
         bool _busy;
+        int _gen;              // 每次提问 +1；旧请求的收尾不会改动新请求的界面
         long _autoHiddenAt;
 
         // 对话记录
@@ -43,7 +44,7 @@ namespace FloatSearcher
 
             Input.TextChanged += (s, e) => UpdatePlaceholder();
             Input.PreviewKeyDown += OnInputKey;
-            SendBtn.Click += (s, e) => { if (_busy) StopAnswer(); else Submit(); };
+            SendBtn.Click += (s, e) => { if (_busy) { StopAnswer(); SetStatus("已停止"); } else Submit(); };
             CloseBtn.Click += (s, e) => HideBar();
             NewBtn.Click += (s, e) => NewConversation();
             ClipCard.MouseLeftButtonUp += (s, e) =>
@@ -60,27 +61,42 @@ namespace FloatSearcher
 
         // ================= 显示 / 隐藏 =================
 
-        /// <summary>点悬浮图标：没开就打开当前模式；开着且是同一模式就收起</summary>
-        public static void Toggle(BubbleWindow bubble)
+        /// <summary>
+        /// 按下悬浮图标那一刻输入窗是不是开着（包括「刚因为点到图标而自动收起」）。
+        /// 在鼠标按下时记下来，松开时据此决定是打开还是收起。
+        /// </summary>
+        public static bool WasOpen()
         {
-            var bar = Current ?? new InputBar();
-            var mode = App.Settings.Mode;
-            if (bar.IsVisible && bar._mode == mode) { bar.HideBar(); return; }
-            // 刚因为点到别处自动收起（点的正是悬浮图标）：当作「收起」，不再重新打开
-            if (!bar.IsVisible && bar._mode == mode && Environment.TickCount64 - bar._autoHiddenAt < 400) return;
-            bar.ShowFor(mode);
+            var bar = Current;
+            if (bar == null || bar._mode != App.Settings.Mode) return false;
+            return bar.IsVisible || Environment.TickCount64 - bar._autoHiddenAt < 600;
         }
 
-        /// <summary>扇形里换了模式：输入窗开着就跟着切换</summary>
-        public void SwitchMode(Mode m)
+        /// <summary>点悬浮图标：没开就打开当前模式；开着就收起</summary>
+        public static void Toggle(bool wasOpen)
         {
-            if (IsVisible) ShowFor(m);
+            var bar = Current ?? new InputBar();
+            if (wasOpen)
+            {
+                if (bar.IsVisible) bar.HideBar();
+                return;
+            }
+            bar.ShowFor(App.Settings.Mode);
+        }
+
+        /// <summary>扇形里换了模式：输入窗开着（或刚被这次点击收起）就跟着切换</summary>
+        public static void OnModeChosen(Mode m)
+        {
+            var bar = Current;
+            if (bar == null) return;
+            if (bar.IsVisible || Environment.TickCount64 - bar._autoHiddenAt < 600) bar.ShowFor(m);
         }
 
         public static void ResetChat()
         {
             var bar = Current;
             if (bar == null) return;
+            if (bar._busy && bar._mode == Mode.Chat) bar.StopAnswer();
             bar._chat.Clear();
             bar.ChatPanel.Children.Clear();
             if (bar._mode == Mode.Chat) bar.UpdateOutputVisibility();
@@ -121,6 +137,8 @@ namespace FloatSearcher
             Activate();
             Input.Focus();
             Keyboard.Focus(Input);
+            Dispatcher.BeginInvoke(new Action(() => { Input.Focus(); Keyboard.Focus(Input); }),
+                System.Windows.Threading.DispatcherPriority.Input);
             if (m == Mode.Translate && Input.Text.Length > 0) Input.SelectAll();
             else Input.CaretIndex = Input.Text.Length;
 
@@ -235,7 +253,9 @@ namespace FloatSearcher
 
         void StopAnswer()
         {
+            _gen++;
             _ai.Cancel();
+            SetBusy(false);
         }
 
         void SetBusy(bool on)
@@ -282,9 +302,11 @@ namespace FloatSearcher
         {
             var prompt = Prompts.Translate(App.Settings);
             var key = prompt + "\u0001" + text;
+            int gen = ++_gen;
             if (TrCache.TryGetValue(key, out var cached))
             {
-                StopAnswer();
+                _ai.Cancel();
+                SetBusy(false);
                 RenderTranslation(cached, done: true);
                 Input.SelectAll();
                 return;
@@ -299,8 +321,14 @@ namespace FloatSearcher
             {
                 var full = await _ai.StreamAsync(App.Settings, prompt,
                     new List<ChatMsg> { new ChatMsg("user", text) },
-                    piece => { acc.Append(piece); RenderTranslation(acc.ToString(), done: false); },
+                    piece =>
+                    {
+                        if (gen != _gen) return; // 已经在查下一个了
+                        acc.Append(piece);
+                        RenderTranslation(acc.ToString(), done: false);
+                    },
                     noThinking: true);
+                if (gen != _gen) return;
                 if (string.IsNullOrWhiteSpace(full))
                 {
                     SetStatus("没有拿到译文，再按一次回车试试", true);
@@ -312,10 +340,10 @@ namespace FloatSearcher
                 }
                 if (_mode == Mode.Translate) Input.SelectAll(); // 接着打字就是查下一个
             }
-            catch (OperationCanceledException) { SetStatus(null); }
-            catch (AiException e) { SetStatus(e.Message, true); }
-            catch (Exception e) { SetStatus("出错了：" + e.Message, true); }
-            finally { SetBusy(false); }
+            catch (OperationCanceledException) { if (gen == _gen) SetStatus(null); }
+            catch (AiException e) { if (gen == _gen) SetStatus(e.Message, true); }
+            catch (Exception e) { if (gen == _gen) SetStatus("出错了：" + e.Message, true); }
+            finally { if (gen == _gen) SetBusy(false); }
         }
 
         /// <summary>第一行大字是主译文，后面每行是同义词 / 各种句式；点哪一行就复制哪一行</summary>
@@ -379,10 +407,11 @@ namespace FloatSearcher
         async Task Converse(List<ChatMsg> history, StackPanel panel, string display, string content, string system)
         {
             if (_busy) StopAnswer();
+            int gen = ++_gen;
             AddBubble(panel, display, user: true);
-            history.Add(new ChatMsg("user", content));
-            // 只带最近 20 条，避免太长
-            while (history.Count > 20) history.RemoveAt(0);
+            var userMsg = new ChatMsg("user", content);
+            history.Add(userMsg);
+            TrimHistory(history, keepHead: ReferenceEquals(history, _clip));
 
             var answerBox = AddBubble(panel, "…", user: false);
             answerBox.Foreground = App.Brush("InkSoft");
@@ -400,27 +429,25 @@ namespace FloatSearcher
                         acc.Append(piece);
                         answerBox.Foreground = App.Brush("Ink");
                         answerBox.Text = CleanMd(acc.ToString());
-                        SetStatus("正在回答…");
-                        ScrollToEnd();
+                        if (gen == _gen) { SetStatus("正在回答…"); ScrollToEnd(); }
                     },
-                    onThinking: n => { if (acc.Length == 0) SetStatus($"深度思考中…（已想 {n} 字）"); });
+                    onThinking: n => { if (gen == _gen && acc.Length == 0) SetStatus($"深度思考中…（已想 {n} 字）"); });
                 if (string.IsNullOrWhiteSpace(full))
                 {
                     answerBox.Text = "（没有收到回答）";
-                    history.RemoveAt(history.Count - 1);
+                    Settle(history, userMsg, null);
                 }
                 else
                 {
                     answerBox.Text = CleanMd(full);
-                    history.Add(new ChatMsg("assistant", full));
+                    Settle(history, userMsg, full);
                 }
-                SetStatus(null);
+                if (gen == _gen) SetStatus(null);
             }
             catch (OperationCanceledException)
             {
-                if (acc.Length > 0) history.Add(new ChatMsg("assistant", acc.ToString()));
-                else { answerBox.Text = "（已停止）"; history.RemoveAt(history.Count - 1); }
-                SetStatus("已停止");
+                if (acc.Length == 0) answerBox.Text = "（已停止）";
+                Settle(history, userMsg, acc.Length > 0 ? acc.ToString() : null);
             }
             catch (Exception e)
             {
@@ -429,16 +456,43 @@ namespace FloatSearcher
                 {
                     answerBox.Text = "⚠ " + msg;
                     answerBox.Foreground = App.Brush("Danger");
-                    history.RemoveAt(history.Count - 1); // 撤回这条，方便重试
                 }
-                SetStatus(msg, true);
+                Settle(history, userMsg, acc.Length > 0 ? acc.ToString() : null);
+                if (gen == _gen) SetStatus(msg, true);
             }
             finally
             {
-                SetBusy(false);
-                UpdatePlaceholder();
-                ScrollToEnd();
+                if (gen == _gen)
+                {
+                    SetBusy(false);
+                    UpdatePlaceholder();
+                    ScrollToEnd();
+                }
             }
+        }
+
+        /// <summary>
+        /// 把这一问的结果放回对话记录：有回答就紧跟在这条提问后面；没有回答就撤回这条提问（方便重试）。
+        /// 对话已被清空、或已经开始了新的提问时也不会弄乱顺序。
+        /// </summary>
+        static void Settle(List<ChatMsg> history, ChatMsg userMsg, string answer)
+        {
+            int idx = history.IndexOf(userMsg);
+            if (idx < 0) return; // 对话已经清空了
+            if (string.IsNullOrWhiteSpace(answer)) history.RemoveAt(idx);
+            else history.Insert(idx + 1, new ChatMsg("assistant", answer));
+        }
+
+        /// <summary>只带最近 20 条；开头必须是用户的话。剪贴板对话保留第一问一答（里面有原文）。</summary>
+        static void TrimHistory(List<ChatMsg> h, bool keepHead)
+        {
+            int start = keepHead && h.Count > 2 && h[0].Role == "user" && h[1].Role == "assistant" ? 2 : 0;
+            while (h.Count > 20 && h.Count - start > 2)
+            {
+                h.RemoveAt(start);
+                if (h.Count - start > 1 && h[start].Role != "user") h.RemoveAt(start);
+            }
+            while (h.Count > 1 && h[0].Role != "user") h.RemoveAt(0);
         }
 
         /// <summary>对话气泡：自己的靠右、带底色；AI 的靠左。用只读文本框，可以选中复制。</summary>

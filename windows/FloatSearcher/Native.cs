@@ -30,7 +30,23 @@ namespace FloatSearcher
         [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hWnd, int nIndex);
         [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr hWnd, int nIndex, int value);
 
+        [DllImport("user32.dll")]
+        static extern bool SetWindowPos(IntPtr hWnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+
         const uint MONITOR_DEFAULTTONEAREST = 2;
+        static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+        const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_NOACTIVATE = 0x10;
+
+        /// <summary>提到所有置顶窗口的最上面，但不抢键盘焦点</summary>
+        public static void BringToFront(Window w)
+        {
+            try
+            {
+                var h = new WindowInteropHelper(w).Handle;
+                if (h != IntPtr.Zero) SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+            }
+            catch { }
+        }
         const int GWL_EXSTYLE = -20;
         const int WS_EX_TOOLWINDOW = 0x80;
 

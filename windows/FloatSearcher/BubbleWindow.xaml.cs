@@ -38,6 +38,7 @@ namespace FloatSearcher
         readonly DispatcherTimer _closeTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(380) };
         bool _fanOpen;
         bool _pressed;
+        bool _barWasOpen;
         Point _downAt;
 
         public BubbleWindow()
@@ -57,6 +58,8 @@ namespace FloatSearcher
             BubbleHost.MouseMove += OnMove;
             BubbleHost.MouseLeftButtonUp += OnUp;
             BubbleHost.MouseRightButtonUp += (s, e) => { e.Handled = true; ShowMenu(); };
+            // 鼠标被别的窗口抢走（Alt+Tab、弹窗）时，别一直以为还按着
+            BubbleHost.LostMouseCapture += (s, e) => _pressed = false;
 
             // 先按上次的位置摆好，显示后再按所在屏幕校正
             var st = App.Settings;
@@ -103,6 +106,7 @@ namespace FloatSearcher
         void OnDown(object sender, MouseButtonEventArgs e)
         {
             _pressed = true;
+            _barWasOpen = InputBar.WasOpen();
             _downAt = e.GetPosition(this);
             BubbleHost.CaptureMouse();
             e.Handled = true;
@@ -135,7 +139,7 @@ namespace FloatSearcher
             e.Handled = true;
             _openTimer.Stop();
             CloseFan();
-            InputBar.Toggle(this);
+            InputBar.Toggle(_barWasOpen);
         }
 
         // ================= 悬停动画 =================
@@ -230,6 +234,7 @@ namespace FloatSearcher
                     RenderTransformOrigin = new Point(0.5, 0.5),
                     RenderTransform = tg,
                     Visibility = Visibility.Collapsed,
+                    Opacity = 0, // 第一次展开时不闪
                     Effect = new DropShadowEffect { BlurRadius = 8, ShadowDepth = 1, Opacity = 0.25 },
                     ToolTip = mode switch
                     {
@@ -262,7 +267,7 @@ namespace FloatSearcher
             RefreshMode();
             CloseFan();
             Bounce();
-            InputBar.Current?.SwitchMode(m);
+            InputBar.OnModeChosen(m);
         }
 
         public void RefreshMode()
@@ -289,6 +294,8 @@ namespace FloatSearcher
         {
             if (_fanOpen || _pressed) return;
             _fanOpen = true;
+            // 输入窗开着时，把图标这层提到最上面，扇形不会被输入窗挡住（不抢焦点）
+            Native.BringToFront(this);
             double dir = FanDirection();
 
             // 感应区：图标到选项之间的扇形

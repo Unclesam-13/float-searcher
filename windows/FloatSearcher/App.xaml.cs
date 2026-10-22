@@ -55,6 +55,7 @@ namespace FloatSearcher
         {
             if (_settingsWin != null)
             {
+                if (_settingsWin.WindowState == WindowState.Minimized) _settingsWin.WindowState = WindowState.Normal;
                 _settingsWin.Activate();
                 return;
             }

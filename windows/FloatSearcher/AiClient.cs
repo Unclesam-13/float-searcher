@@ -75,6 +75,10 @@ namespace FloatSearcher
                 {
                     throw new AiException("等太久没有回应，请检查网络后再试。");
                 }
+                catch (Exception) when (token.IsCancellationRequested)
+                {
+                    throw new OperationCanceledException(token);
+                }
                 catch (HttpRequestException e)
                 {
                     throw new AiException("连不上服务器：请检查网络，或接口地址是否写对。（" + e.Message + "）");
@@ -87,6 +91,7 @@ namespace FloatSearcher
                 {
                     string body = "";
                     try { body = await resp.Content.ReadAsStringAsync(token); } catch { }
+                    token.ThrowIfCancellationRequested();
                     throw new AiException(DescribeHttp((int)resp.StatusCode, body));
                 }
 
@@ -99,10 +104,15 @@ namespace FloatSearcher
                     token.ThrowIfCancellationRequested();
                     string line;
                     try { line = await reader.ReadLineAsync(token); }
-                    catch (IOException) when (!token.IsCancellationRequested)
+                    catch (Exception) when (token.IsCancellationRequested)
+                    {
+                        throw new OperationCanceledException(token);
+                    }
+                    catch (IOException)
                     {
                         throw new AiException("连接中断了，请再试一次。");
                     }
+                    token.ThrowIfCancellationRequested(); // 停止后不再回调
                     if (line == null) break;
                     if (!line.StartsWith("data:")) continue;
                     var data = line.Substring(5).Trim();

@@ -128,6 +128,7 @@ namespace FloatSearcher
         async System.Threading.Tasks.Task TestConnection()
         {
             SaveAll();
+            TestBtn.IsEnabled = false;
             TestResult.Foreground = App.Brush("InkSoft");
             TestResult.Text = "连接中…";
             try
@@ -143,6 +144,7 @@ namespace FloatSearcher
                 TestResult.Foreground = App.Brush("Danger");
                 TestResult.Text = e.Message;
             }
+            finally { TestBtn.IsEnabled = true; }
         }
     }
 }
