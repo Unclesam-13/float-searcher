@@ -46,6 +46,7 @@ namespace FloatSearcher
         // ---- 剪贴板 ----
         public ClipAction ClipAction { get; set; } = ClipAction.AutoSend;
         public string ClipPrompt { get; set; } = "请解释这段内容。如果是外文，先翻译成中文再解释。";
+        public string ClipImagePrompt { get; set; } = "请说明这张图片的内容。如果图里有文字，先把文字提取出来；如果是外文，再翻译成中文。";
         /// <summary>剪贴板模式下的快捷提示词，每行「名称 | 指令」</summary>
         public string ClipPresets { get; set; } =
             "解释 | 用通俗的话解释这段内容。\n" +

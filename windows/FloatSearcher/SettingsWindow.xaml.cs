@@ -57,6 +57,7 @@ namespace FloatSearcher
             ClipAuto.IsChecked = s.ClipAction == ClipAction.AutoSend;
             ClipAsk.IsChecked = s.ClipAction == ClipAction.AskFirst;
             ClipPrompt.Text = s.ClipPrompt;
+            ClipImagePromptBox.Text = s.ClipImagePrompt;
             ClipPresets.Text = s.ClipPresets;
 
             AutoStart.IsChecked = AppSettings.AutoStart;
@@ -117,6 +118,7 @@ namespace FloatSearcher
 
             s.ClipAction = ClipAsk.IsChecked == true ? ClipAction.AskFirst : ClipAction.AutoSend;
             if (!string.IsNullOrWhiteSpace(ClipPrompt.Text)) s.ClipPrompt = ClipPrompt.Text.Replace("\r", "").Trim();
+            if (!string.IsNullOrWhiteSpace(ClipImagePromptBox.Text)) s.ClipImagePrompt = ClipImagePromptBox.Text.Replace("\r", "").Trim();
             s.ClipPresets = ClipPresets.Text.Replace("\r", "");
 
             AppSettings.AutoStart = AutoStart.IsChecked == true;

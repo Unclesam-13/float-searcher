@@ -210,11 +210,17 @@
                     <StackPanel>
                         <TextBlock Style="{StaticResource H}" Text="剪贴板" />
                         <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,4"
-                                   Text="复制一段文字后单击悬浮图标，内容会自动放进对话。粘贴之后：" />
+                                   Text="复制一段文字或一张图片（截图、网页图片、资源管理器里的图片文件）后单击悬浮图标，内容会自动放进对话。剪贴板里同时有文字和图片时用文字。粘贴之后：" />
                         <RadioButton x:Name="ClipAuto" GroupName="clip"
                                      Content="自动用下面的提示词发送（最快）" />
-                        <TextBox x:Name="ClipPrompt" Margin="22,6,0,0" AcceptsReturn="True" TextWrapping="Wrap"
+                        <TextBlock Style="{StaticResource Hint}" Margin="22,6,0,0" Text="复制的是文字时用：" />
+                        <TextBox x:Name="ClipPrompt" Margin="22,4,0,0" AcceptsReturn="True" TextWrapping="Wrap"
                                  MinHeight="44" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="22,8,0,0" Text="复制的是图片时用：" />
+                        <TextBox x:Name="ClipImagePromptBox" Margin="22,4,0,0" AcceptsReturn="True" TextWrapping="Wrap"
+                                 MinHeight="44" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="22,4,0,0"
+                                   Text="图片提问需要能看图的模型：Claude，或 DeepSeek 的 deepseek-flash（选了别的 DeepSeek 模型时，带图的提问会自动改用 flash）。" />
                         <RadioButton x:Name="ClipAsk" GroupName="clip" Margin="0,10,0,0"
                                      Content="先不发送，等我输入提示词再按回车" />
 

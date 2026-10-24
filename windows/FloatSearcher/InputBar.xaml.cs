@@ -9,6 +9,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.IO;
 
 namespace FloatSearcher
 {
@@ -35,6 +37,11 @@ namespace FloatSearcher
         string _clipText;        // 当前剪贴板对话针对的内容
         string _ownCopy;         // 自己复制出去的文字（不当成新的剪贴板内容）
         bool _clipExpanded;
+        BitmapSource _clipImage;  // 当前剪贴板对话针对的图片（和 _clipText 只会有一个）
+        string _clipImageB64;     // 压缩后的 JPEG
+        string _clipImageInfo;    // 「1920×1080」
+        uint _clipImageSeq;       // 读到这张图时的剪贴板序号
+        bool HasClip => _clipText != null || _clipImageB64 != null;
 
         // 翻译结果缓存（指令 + 原文 → 译文）
         static readonly Dictionary<string, string> TrCache = new Dictionary<string, string>();
@@ -60,6 +67,7 @@ namespace FloatSearcher
             {
                 _clipExpanded = !_clipExpanded;
                 ClipText.MaxHeight = _clipExpanded ? 260 : 58;
+                ClipImage.MaxHeight = _clipExpanded ? 320 : 96;
             };
 
             PreviewKeyDown += (s, e) => { if (e.Key == Key.Escape) { e.Handled = true; HideBar(); } };
@@ -156,7 +164,8 @@ namespace FloatSearcher
             if (m == Mode.Clipboard && _pendingAutoSend)
             {
                 _pendingAutoSend = false;
-                SendClip(App.Settings.ClipPrompt, App.Settings.ClipPrompt, includeText: true);
+                var prompt = _clipImageB64 != null ? App.Settings.ClipImagePrompt : App.Settings.ClipPrompt;
+                SendClip(prompt, prompt, includeText: true);
             }
         }
 
@@ -203,8 +212,8 @@ namespace FloatSearcher
             {
                 Mode.Translate => "输入中文，回车翻译成英文",
                 Mode.Chat => "问点什么，回车发送（Shift+回车换行）",
-                _ => _clipText == null ? "先复制一段文字，再点悬浮图标"
-                   : (_clip.Count == 0 ? "对这段内容说点什么，回车发送" : "继续追问，回车发送"),
+                _ => !HasClip ? "先复制一段文字或一张图片，再点悬浮图标"
+                   : (_clip.Count == 0 ? (_clipImageB64 != null ? "对这张图片说点什么，回车发送" : "对这段内容说点什么，回车发送") : "继续追问，回车发送"),
             };
             Placeholder.Visibility = Input.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
@@ -233,7 +242,7 @@ namespace FloatSearcher
                     _ = Converse(_chat, ChatPanel, text, text, App.Settings.ChatSystem);
                     break;
                 case Mode.Clipboard:
-                    if (_clipText == null) { SetStatus("剪贴板里没有文字。先复制，再点悬浮图标。", true); return; }
+                    if (!HasClip) { SetStatus("剪贴板里没有文字或图片。先复制，再点悬浮图标。", true); return; }
                     if (text.Length == 0) return;
                     Input.Text = "";
                     SendClip(text, text, includeText: _clip.Count == 0);
@@ -414,12 +423,13 @@ namespace FloatSearcher
 
         // ================= AI 对话（AI 对话、剪贴板共用） =================
 
-        async Task Converse(List<ChatMsg> history, StackPanel panel, string display, string content, string system)
+        async Task Converse(List<ChatMsg> history, StackPanel panel, string display, string content, string system,
+                            string image = null)
         {
             if (_busy) StopAnswer();
             int gen = ++_gen;
-            AddBubble(panel, display, user: true);
-            var userMsg = new ChatMsg("user", content);
+            AddBubble(panel, image != null ? "🖼 " + display : display, user: true);
+            var userMsg = new ChatMsg("user", content) { Image = image };
             history.Add(userMsg);
             TrimHistory(history, keepHead: ReferenceEquals(history, _clip));
 
@@ -643,38 +653,164 @@ namespace FloatSearcher
             return null;
         }
 
-        /// <summary>读剪贴板：内容变了就开始一段新对话</summary>
+        static readonly string[] ImageExts = { ".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff", ".ico" };
+
+        /// <summary>读剪贴板里的图片：资源管理器里复制的图片文件、截图、网页里「复制图片」</summary>
+        static BitmapSource ReadClipboardImage()
+        {
+            for (int i = 0; i < 4; i++)
+            {
+                try
+                {
+                    // 资源管理器里复制的图片文件
+                    if (Clipboard.ContainsFileDropList())
+                    {
+                        foreach (var f in Clipboard.GetFileDropList())
+                        {
+                            if (f == null || Array.IndexOf(ImageExts, Path.GetExtension(f).ToLowerInvariant()) < 0) continue;
+                            if (!File.Exists(f)) continue;
+                            var bi = new BitmapImage();
+                            bi.BeginInit();
+                            bi.CacheOption = BitmapCacheOption.OnLoad;
+                            bi.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
+                            bi.UriSource = new Uri(f);
+                            bi.EndInit();
+                            bi.Freeze();
+                            return bi;
+                        }
+                        return null;
+                    }
+                    // 浏览器等会放一份 PNG（保留透明度，比 DIB 可靠）
+                    if (Clipboard.ContainsData("PNG") && Clipboard.GetData("PNG") is MemoryStream ms)
+                    {
+                        ms.Position = 0;
+                        var dec = new PngBitmapDecoder(ms, BitmapCreateOptions.PreservePixelFormat, BitmapCacheOption.OnLoad);
+                        var fr = dec.Frames[0];
+                        fr.Freeze();
+                        return fr;
+                    }
+                    if (Clipboard.ContainsImage())
+                    {
+                        var img = Clipboard.GetImage();
+                        if (img != null) { img.Freeze(); return img; }
+                    }
+                    return null;
+                }
+                catch { Thread.Sleep(50); }
+            }
+            return null;
+        }
+
+        /// <summary>最长边不超过 1568 像素，透明处垫白底，JPEG 质量 85，转 base64</summary>
+        static string EncodeJpeg(BitmapSource src)
+        {
+            int w = src.PixelWidth, h = src.PixelHeight;
+            if (w < 1 || h < 1) return null;
+            double scale = Math.Min(1.0, 1568.0 / Math.Max(w, h));
+            int tw = Math.Max(1, (int)Math.Round(w * scale));
+            int th = Math.Max(1, (int)Math.Round(h * scale));
+
+            var dv = new DrawingVisual();
+            RenderOptions.SetBitmapScalingMode(dv, BitmapScalingMode.HighQuality);
+            using (var dc = dv.RenderOpen())
+            {
+                dc.DrawRectangle(Brushes.White, null, new Rect(0, 0, tw, th));
+                dc.DrawImage(src, new Rect(0, 0, tw, th));
+            }
+            var rtb = new RenderTargetBitmap(tw, th, 96, 96, PixelFormats.Pbgra32);
+            rtb.Render(dv);
+
+            var enc = new JpegBitmapEncoder { QualityLevel = 85 };
+            enc.Frames.Add(BitmapFrame.Create(rtb));
+            using var outMs = new MemoryStream();
+            enc.Save(outMs);
+            return Convert.ToBase64String(outMs.ToArray());
+        }
+
+        /// <summary>换了新的剪贴板内容：清掉旧对话</summary>
+        void StartClip()
+        {
+            if (_busy) StopAnswer();
+            _clip.Clear();
+            ClipPanel.Children.Clear();
+            _clipExpanded = false;
+            ClipText.MaxHeight = 58;
+            ClipImage.MaxHeight = 96;
+            // 「粘贴后自动发送」：显示出来后立刻用预设提示词发送
+            _pendingAutoSend = App.Settings.ClipAction == ClipAction.AutoSend;
+        }
+
+        /// <summary>读剪贴板：内容变了就开始一段新对话。同时有文字和图片时用文字</summary>
         void PrepareClipboard()
         {
             var text = ReadClipboard();
-            bool isNew = text != null && text != _clipText && text != _ownCopy;
-            if (isNew)
+            if (text != null)
             {
-                if (_busy) StopAnswer();
-                _clipText = text;
-                _clip.Clear();
-                ClipPanel.Children.Clear();
-                _clipExpanded = false;
-                ClipText.MaxHeight = 58;
-                // 「粘贴后自动发送」：显示出来后立刻用预设提示词发送
-                _pendingAutoSend = App.Settings.ClipAction == ClipAction.AutoSend;
+                bool isNew = text != _clipText && text != _ownCopy;
+                if (isNew || (_clipImageB64 != null && text != _ownCopy))
+                {
+                    StartClip();
+                    _clipText = text;
+                    _clipImage = null; _clipImageB64 = null; _clipImageInfo = null;
+                }
+            }
+            else
+            {
+                // 没有文字：看看有没有图片（剪贴板序号没变就是同一张，不重复读）
+                uint seq = Native.ClipboardSeq();
+                if (_clipImageB64 == null || seq == 0 || seq != _clipImageSeq)
+                {
+                    var img = ReadClipboardImage();
+                    string b64 = null;
+                    if (img != null)
+                    {
+                        try { b64 = EncodeJpeg(img); } catch { b64 = null; }
+                    }
+                    if (b64 != null && b64 != _clipImageB64)
+                    {
+                        StartClip();
+                        _clipText = null;
+                        _clipImage = img;
+                        _clipImageB64 = b64;
+                        _clipImageInfo = $"{img.PixelWidth}×{img.PixelHeight}";
+                    }
+                    if (b64 != null) _clipImageSeq = seq;
+                }
             }
 
-            if (_clipText == null)
+            if (!HasClip)
             {
-                SetStatus("剪贴板里没有文字。先复制一段，再点悬浮图标。", true);
+                SetStatus("剪贴板里没有文字或图片。先复制一段文字或一张图，再点悬浮图标。", true);
                 return;
             }
             ClipCard.Visibility = Visibility.Visible;
-            ClipTitle.Text = $"剪贴板 · {_clipText.Length} 字";
-            ClipText.Text = _clipText;
+            if (_clipImageB64 != null)
+            {
+                ClipTitle.Text = $"剪贴板 · 图片 {_clipImageInfo} · 点击放大";
+                ClipText.Visibility = Visibility.Collapsed;
+                ClipImage.Source = _clipImage;
+                ClipImage.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                ClipTitle.Text = $"剪贴板 · {_clipText.Length} 字";
+                ClipText.Text = _clipText;
+                ClipText.Visibility = Visibility.Visible;
+                ClipImage.Source = null;
+                ClipImage.Visibility = Visibility.Collapsed;
+            }
             RenderChips();
+            UpdatePlaceholder();
         }
 
         void RenderChips()
         {
             Chips.Children.Clear();
-            foreach (var p in App.Settings.ClipPresetList())
+            var list = new List<KeyValuePair<string, string>>();
+            if (_clipImageB64 != null)
+                list.Add(new KeyValuePair<string, string>("提取文字", "把图片里的文字原样提取出来，保持原有的分段和顺序，不要解释。"));
+            foreach (var p in App.Settings.ClipPresetList()) list.Add(new KeyValuePair<string, string>(p.Key, p.Value));
+            foreach (var p in list)
             {
                 var prompt = p.Value;
                 var name = p.Key;
@@ -682,13 +818,19 @@ namespace FloatSearcher
                 b.Click += (s, e) => SendClip(name, prompt, includeText: true);
                 Chips.Children.Add(b);
             }
-            Chips.Visibility = _clipText != null && Chips.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+            Chips.Visibility = HasClip && Chips.Children.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         }
 
-        /// <summary>对剪贴板内容提问：第一次提问或点快捷按钮时，把原文一起带上</summary>
+        /// <summary>对剪贴板内容提问：第一次提问或点快捷按钮时，把原文 / 图片一起带上</summary>
         void SendClip(string display, string prompt, bool includeText)
         {
-            if (_clipText == null) return;
+            if (!HasClip) return;
+            if (_clipImageB64 != null)
+            {
+                _ = Converse(_clip, ClipPanel, display, prompt, App.Settings.ChatSystem,
+                             image: includeText ? _clipImageB64 : null);
+                return;
+            }
             string content = includeText
                 ? prompt + "\n\n内容：\n\"\"\"\n" + _clipText + "\n\"\"\""
                 : prompt;

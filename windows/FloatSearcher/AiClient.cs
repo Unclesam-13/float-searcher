@@ -16,6 +16,8 @@ namespace FloatSearcher
     {
         public string Role { get; set; }
         public string Content { get; set; }
+        /// <summary>可选的图片（JPEG，base64），只放在用户消息里</summary>
+        public string Image { get; set; }
         public ChatMsg(string role, string content) { Role = role; Content = content; }
     }
 
@@ -81,24 +83,35 @@ namespace FloatSearcher
 
             var key = (s.ApiKey ?? "").Trim();
             var model = s.EffectiveModel;
+            bool hasImage = false;
+            foreach (var m in history) if (m.Image != null) { hasImage = true; break; }
+            // DeepSeek 只有 deepseek-flash 能看图：带图片时自动用它
+            if (hasImage && s.Provider == Providers.DeepSeek) model = "deepseek-flash";
             var baseUrl = s.EffectiveBaseUrl.TrimEnd('/');
             if (key.Length == 0) throw new AiException("还没填 API Key：右键悬浮图标 → 设置。");
             if (model.Length == 0) throw new AiException("还没填模型名：右键悬浮图标 → 设置。");
 
             string result;
-            if (s.Provider == Providers.Anthropic)
+            try
             {
-                var req = BuildAnthropic(baseUrl, key, model, system, history);
-                result = (await RunRound(req, true, token, onDelta, onThinking, null)).Content;
+                if (s.Provider == Providers.Anthropic)
+                {
+                    var req = BuildAnthropic(baseUrl, key, model, system, history);
+                    result = (await RunRound(req, true, token, onDelta, onThinking, null)).Content;
+                }
+                else if (web != null && s.Provider == Providers.DeepSeek)
+                {
+                    result = await WebLoop(baseUrl, key, model, system, history, token, onDelta, web);
+                }
+                else
+                {
+                    var body = OpenAiBody(model, system, history, s.Provider == Providers.DeepSeek, s.DeepThink && !noThinking);
+                    result = (await RunRound(OpenAiRequest(baseUrl, key, body), false, token, onDelta, onThinking, null)).Content;
+                }
             }
-            else if (web != null && s.Provider == Providers.DeepSeek)
+            catch (AiException e) when (hasImage && e.Message.StartsWith("请求有误"))
             {
-                result = await WebLoop(baseUrl, key, model, system, history, token, onDelta, web);
-            }
-            else
-            {
-                var body = OpenAiBody(model, system, history, s.Provider == Providers.DeepSeek, s.DeepThink && !noThinking);
-                result = (await RunRound(OpenAiRequest(baseUrl, key, body), false, token, onDelta, onThinking, null)).Content;
+                throw new AiException(e.Message.Replace("请求有误，常见原因是模型名写错", "所选模型可能不支持图片，换个能看图的模型再试"));
             }
             token.ThrowIfCancellationRequested();
             if (ReferenceEquals(_cts, cts)) _cts = null;
@@ -243,7 +256,7 @@ namespace FloatSearcher
         {
             var msgs = new JsonArray { new JsonObject { ["role"] = "system", ["content"] = system + WebSystemNote() } };
             foreach (var m in history)
-                msgs.Add(new JsonObject { ["role"] = m.Role, ["content"] = m.Content });
+                msgs.Add(new JsonObject { ["role"] = m.Role, ["content"] = OpenAiContent(m) });
             string question = "";
             for (int i = history.Count - 1; i >= 0; i--)
                 if (history[i].Role == "user") { question = history[i].Content; break; }
@@ -412,6 +425,38 @@ namespace FloatSearcher
             return list;
         }
 
+        // ================= 带图片的消息 =================
+
+        /// <summary>OpenAI 兼容格式：有图片时是「文字 + 图片」数组</summary>
+        static JsonNode OpenAiContent(ChatMsg m)
+        {
+            if (m.Image == null) return JsonValue.Create(m.Content);
+            return new JsonArray
+            {
+                new JsonObject { ["type"] = "text", ["text"] = m.Content },
+                new JsonObject
+                {
+                    ["type"] = "image_url",
+                    ["image_url"] = new JsonObject { ["url"] = "data:image/jpeg;base64," + m.Image },
+                },
+            };
+        }
+
+        /// <summary>Claude 格式：图片块在前，文字在后</summary>
+        static JsonNode AnthropicContent(ChatMsg m)
+        {
+            if (m.Image == null) return JsonValue.Create(m.Content);
+            return new JsonArray
+            {
+                new JsonObject
+                {
+                    ["type"] = "image",
+                    ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = "image/jpeg", ["data"] = m.Image },
+                },
+                new JsonObject { ["type"] = "text", ["text"] = m.Content },
+            };
+        }
+
         // ================= Claude =================
 
         static HttpRequestMessage BuildAnthropic(string baseUrl, string key, string model, string system, IList<ChatMsg> history)
@@ -419,7 +464,7 @@ namespace FloatSearcher
             var url = baseUrl.EndsWith("/v1") ? baseUrl + "/messages" : baseUrl + "/v1/messages";
             var msgs = new JsonArray();
             foreach (var m in history)
-                msgs.Add(new JsonObject { ["role"] = m.Role, ["content"] = m.Content });
+                msgs.Add(new JsonObject { ["role"] = m.Role, ["content"] = AnthropicContent(m) });
             var body = new JsonObject
             {
                 ["model"] = model,
@@ -463,7 +508,7 @@ namespace FloatSearcher
         {
             var msgs = new JsonArray { new JsonObject { ["role"] = "system", ["content"] = system } };
             foreach (var m in history)
-                msgs.Add(new JsonObject { ["role"] = m.Role, ["content"] = m.Content });
+                msgs.Add(new JsonObject { ["role"] = m.Role, ["content"] = OpenAiContent(m) });
             var body = new JsonObject
             {
                 ["model"] = model,

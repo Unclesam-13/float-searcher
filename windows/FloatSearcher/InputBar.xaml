@@ -140,6 +140,9 @@
                     <TextBlock x:Name="ClipText" Margin="0,3,0,0" FontSize="13" TextWrapping="Wrap"
                                Foreground="{DynamicResource InkSoft}" MaxHeight="58"
                                TextTrimming="CharacterEllipsis" />
+                    <Image x:Name="ClipImage" Margin="0,5,0,0" MaxHeight="96" Stretch="Uniform"
+                           HorizontalAlignment="Left" Visibility="Collapsed"
+                           RenderOptions.BitmapScalingMode="HighQuality" />
                 </StackPanel>
             </Border>
 
