@@ -4,7 +4,7 @@
 
 支持 DeepSeek、Claude，以及任何 OpenAI 兼容接口（通义千问、Kimi、智谱等）。DeepSeek 还可以联网搜索，回答附带来源。
 
-[⬇ 下载最新版 APK](https://github.com/Unclesam-13/float-searcher/releases/download/build-12/HuaciAI-12.apk) · [所有版本](https://github.com/Unclesam-13/float-searcher/releases) · [Windows 版](windows/README.md)
+[⬇ 下载最新版 APK](https://github.com/Unclesam-13/float-searcher/releases/download/build-12/HuaciAI-12.apk) · [所有版本](https://github.com/Unclesam-13/float-searcher/releases) · [Windows 版](windows/README.md) · [Mac 版](mac/README.md)
 
 > 适用于 Android 8.0 及以上，安装包约 24 MB。
 
@@ -194,4 +194,4 @@
 | `ClipWatchService.kt` / `ClipReader.kt` | 发现复制动作、读取剪贴板 |
 | `MainActivity.kt` | 设置页 |
 
-`windows/` 目录里是 [Windows 版](windows/README.md)：桌面悬浮图标，悬停展开扇形菜单，支持中译英、AI 对话、剪贴板三种模式。
+`windows/` 和 `mac/` 目录里是 [Windows 版](windows/README.md) 和 [Mac 版](mac/README.md)：桌面悬浮图标，悬停展开扇形菜单，支持中译英、AI 对话、剪贴板三种模式和 DeepSeek 联网搜索。

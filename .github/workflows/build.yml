@@ -7,6 +7,8 @@ on:
     branches: [main, master]
     paths-ignore:
       - "windows/**"
+      - "mac/**"
+      - ".github/workflows/mac.yml"
       - ".github/workflows/windows.yml"
       - "**.md"
   workflow_dispatch:

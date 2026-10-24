@@ -1,0 +1,43 @@
+# Mac 版：推送 mac/ 下的改动后自动编译（Apple 芯片 + Intel 通用），打包成 dmg 发布到 Releases。
+name: 编译 Mac 版
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "mac/**"
+      - ".github/workflows/mac.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 编译
+        run: |
+          echo "::add-matcher::.github/swift-matcher.json"
+          cd mac
+          swift --version
+          swift build -c release --arch arm64 --arch x86_64
+
+      - name: 打包 dmg
+        run: mac/package.sh ${{ github.run_number }}
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: FloatSearcher-mac
+          path: FloatSearcher-mac-${{ github.run_number }}.dmg
+
+      - name: 发布到 Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: mac-${{ github.run_number }}
+          name: 划词助手 Mac 第 ${{ github.run_number }} 版
+          body: 下载下面的 FloatSearcher-mac-${{ github.run_number }}.dmg，打开后把「划词助手」拖进「应用程序」。支持 macOS 13 及以上，Apple 芯片和 Intel 都能用。第一次打开如果提示「无法验证开发者」，到「系统设置 → 隐私与安全性」里点「仍要打开」。
+          files: FloatSearcher-mac-${{ github.run_number }}.dmg
