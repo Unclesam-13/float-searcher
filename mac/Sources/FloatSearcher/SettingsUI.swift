@@ -19,7 +19,7 @@ final class SettingsController: NSObject, NSWindowDelegate {
             w.delegate = self
             window = w
         }
-        NSApp.activate(ignoringOtherApps: true)
+        if #available(macOS 14.0, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
         window?.makeKeyAndOrderFront(nil)
     }
 

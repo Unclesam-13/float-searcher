@@ -9,7 +9,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let delegate = AppDelegate()
         app.delegate = delegate
         app.setActivationPolicy(.accessory)
-        app.run()
+        // 没有主菜单时 ⌘V / ⌘C 等快捷键不起作用：建一个看不见的「编辑」菜单
+        app.mainMenu = AppDelegate.editMenu()
+        withExtendedLifetime(delegate) { app.run() }
+    }
+
+    static func editMenu() -> NSMenu {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenu.addItem(NSMenuItem(title: "退出划词助手", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+        appItem.submenu = appMenu
+        main.addItem(appItem)
+
+        let editItem = NSMenuItem()
+        let edit = NSMenu(title: "编辑")
+        edit.addItem(NSMenuItem(title: "撤销", action: Selector(("undo:")), keyEquivalent: "z"))
+        let redo = NSMenuItem(title: "重做", action: Selector(("redo:")), keyEquivalent: "z")
+        redo.keyEquivalentModifierMask = [.command, .shift]
+        edit.addItem(redo)
+        edit.addItem(.separator())
+        edit.addItem(NSMenuItem(title: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        edit.addItem(NSMenuItem(title: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        edit.addItem(NSMenuItem(title: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        edit.addItem(NSMenuItem(title: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+        editItem.submenu = edit
+        main.addItem(editItem)
+        return main
     }
 
     private var statusItem: NSStatusItem?
@@ -18,11 +44,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         let menu = NSMenu()
         menu.delegate = self
+        fill(menu)
         item.menu = menu
         statusItem = item
         refreshStatusItem()
 
         BubbleController.shared.show()
+        // 接上 / 拔掉显示器后，把图标挪回屏幕里
+        NotificationCenter.default.addObserver(forName: NSApplication.didChangeScreenParametersNotification,
+                                               object: nil, queue: .main) { _ in
+            Task { @MainActor in
+                let b = BubbleController.shared
+                b.moveCenter(to: b.center)
+                BarController.shared.reposition()
+            }
+        }
         // 第一次用：先填接口
         if !AppSettings.shared.hasKey { SettingsController.shared.show() }
     }

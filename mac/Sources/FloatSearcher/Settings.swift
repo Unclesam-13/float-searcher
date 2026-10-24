@@ -195,15 +195,32 @@ final class AppSettings: ObservableObject {
         }
     }
 
+    static func alert(_ text: String) {
+        Task { @MainActor in
+            let a = NSAlert()
+            a.messageText = "划词助手"
+            a.informativeText = text
+            a.runModal()
+        }
+    }
+
     // ---- 开机自启（macOS 13+ 的「登录项」） ----
 
     var launchAtLogin: Bool {
         get { SMAppService.mainApp.status == .enabled }
         set {
+            if newValue && !Bundle.main.bundlePath.hasPrefix("/Applications") {
+                AppSettings.alert("请先把「划词助手」拖进「应用程序」文件夹，再从那里打开，然后再开启开机自动启动。")
+                objectWillChange.send()
+                return
+            }
             do {
                 if newValue { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() }
+                if newValue && SMAppService.mainApp.status == .requiresApproval {
+                    SMAppService.openSystemSettingsLoginItems()
+                }
             } catch {
-                NSLog("登录项设置失败：\(error)")
+                AppSettings.alert("开机自动启动没设置成功：\(error.localizedDescription)\n可以到「系统设置 → 通用 → 登录项」里手动添加。")
             }
             objectWillChange.send()
         }

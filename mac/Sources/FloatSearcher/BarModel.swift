@@ -29,7 +29,8 @@ final class BarModel: ObservableObject {
     @Published var clipExpanded = false
     @Published var status: String?
     @Published var statusError = false
-    @Published var busy = false
+    /// 每种模式各自的请求：查单词不会打断正在输出的 AI 回答
+    @Published private(set) var busyModes: Set<Mode> = []
     @Published var height: CGFloat = 0
     @Published var focusTick = 0
 
@@ -38,8 +39,23 @@ final class BarModel: ObservableObject {
     private var chatHistory: [ChatMsg] = []
     private var clipHistory: [ChatMsg] = []
     private var ownCopy: String?
-    private var gen = 0                 // 每次提问 +1；旧请求的收尾不会改动新请求的界面
-    private var task: Task<Void, Never>?
+    private var gens: [Mode: Int] = [:]          // 每次提问 +1；旧请求的收尾不会改动新请求的界面
+    private var tasks: [Mode: Task<Void, Never>] = [:]
+
+    /// 当前模式是否在等回答
+    var busy: Bool { busyModes.contains(mode) }
+
+    private func gen(_ m: Mode) -> Int { gens[m, default: 0] }
+
+    private func bump(_ m: Mode) -> Int {
+        let g = gen(m) + 1
+        gens[m] = g
+        return g
+    }
+
+    /// 这次请求的界面更新还算不算数（没被新请求取代，且用户正看着这个模式）
+    private func live(_ m: Mode, _ g: Int) -> Bool { gen(m) == g }
+    private func shown(_ m: Mode, _ g: Int) -> Bool { gen(m) == g && mode == m }
     private var trCache: [String: String] = [:]
     private var pendingAutoSend = false
 
@@ -50,7 +66,6 @@ final class BarModel: ObservableObject {
     /// 打开前准备：换模式、清空中译英、读剪贴板
     func prepare(for m: Mode, wasVisible: Bool) {
         let changed = m != mode || !wasVisible
-        if busy && m != mode { stop() }
         mode = m
         setStatus(nil)
         if m == .translate && changed {
@@ -69,7 +84,7 @@ final class BarModel: ObservableObject {
     }
 
     func willHide() {
-        if mode == .translate && busy { stop() }
+        if busyModes.contains(.translate) { stop(.translate) }
     }
 
     func hide() { onHide?() }
@@ -119,11 +134,13 @@ final class BarModel: ObservableObject {
         }
     }
 
-    func stop() {
-        gen += 1
-        task?.cancel()
-        task = nil
-        busy = false
+    /// 停止某个模式的请求（默认当前模式）
+    func stop(_ which: Mode? = nil) {
+        let m = which ?? mode
+        _ = bump(m)
+        tasks[m]?.cancel()
+        tasks[m] = nil
+        busyModes.remove(m)
     }
 
     func stopByUser() {
@@ -145,7 +162,7 @@ final class BarModel: ObservableObject {
     }
 
     func resetChat() {
-        if busy && mode == .chat { stop() }
+        if busyModes.contains(.chat) { stop(.chat) }
         chatHistory.removeAll()
         chat.removeAll()
     }
@@ -172,42 +189,44 @@ final class BarModel: ObservableObject {
     func translate(_ text: String) {
         let prompt = Prompts.translate(s)
         let key = prompt + "\u{1}" + text
-        stop()
-        gen += 1
-        let myGen = gen
+        stop(.translate)
+        let myGen = bump(.translate)
         if let cached = trCache[key] {
             trLines = Prompts.split(cached)
             doneTranslating()
             return
         }
-        busy = true
+        busyModes.insert(.translate)
         setStatus("翻译中…")
         trLines = []
         let acc = Box("")
-        task = Task { [weak self] in
+        tasks[.translate] = Task { [weak self] in
             guard let self else { return }
             do {
                 let full = try await AI.stream(AIConfig.current(), system: prompt,
                                                history: [ChatMsg(role: "user", content: text)],
                                                noThinking: true) { piece in
-                    guard myGen == self.gen else { return }
+                    guard self.live(.translate, myGen) else { return }
                     acc.value += piece
                     self.trLines = Prompts.split(acc.value)
                 }
-                guard myGen == self.gen else { return }
+                guard self.live(.translate, myGen) else { return }
                 if full.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    self.setStatus("没有拿到译文，再按一次回车试试", error: true)
+                    if self.mode == .translate { self.setStatus("没有拿到译文，再按一次回车试试", error: true) }
                 } else {
                     self.trCache[key] = full
                     self.trLines = Prompts.split(full)
-                    self.doneTranslating()
+                    if self.mode == .translate { self.doneTranslating() }
                 }
             } catch is CancellationError {
-                if myGen == self.gen { self.setStatus(nil) }
+                if self.shown(.translate, myGen) { self.setStatus(nil) }
             } catch {
-                if myGen == self.gen { self.setStatus(error.localizedDescription, error: true) }
+                if self.shown(.translate, myGen) { self.setStatus(error.localizedDescription, error: true) }
             }
-            if myGen == self.gen { self.busy = false }
+            if self.live(.translate, myGen) {
+                self.busyModes.remove(.translate)
+                self.tasks[.translate] = nil
+            }
         }
     }
 
@@ -222,9 +241,9 @@ final class BarModel: ObservableObject {
     // ================= 对话（AI 对话、剪贴板共用） =================
 
     func converse(isClip: Bool, display: String, content: String) {
-        if busy { stop() }
-        gen += 1
-        let myGen = gen
+        let key: Mode = isClip ? .clipboard : .chat
+        stop(key)
+        let myGen = bump(key)
 
         let userMsg = ChatMsg(role: "user", content: content)
         appendHistory(isClip, userMsg)
@@ -233,7 +252,7 @@ final class BarModel: ObservableObject {
         let answerID = answer.id
         appendUI(isClip, answer)
 
-        busy = true
+        busyModes.insert(key)
         setStatus("思考中…")
         let history = isClip ? clipHistory : chatHistory
         let system = s.chatSystem
@@ -245,25 +264,25 @@ final class BarModel: ObservableObject {
             onSearch: { [weak self] q in
                 guard let self else { return }
                 if acc.value.isEmpty { self.updateUI(isClip, answerID) { $0.text = "正在搜索：\(q) …"; $0.waiting = true } }
-                if myGen == self.gen { self.setStatus("正在联网搜索：\(q)") }
+                if self.shown(key, myGen) { self.setStatus("正在联网搜索：\(q)") }
             },
             onReset: { acc.value = "" },
             onSources: { sources.value = $0 }
         ) : nil
 
-        task = Task { [weak self] in
+        tasks[key] = Task { [weak self] in
             guard let self else { return }
             do {
                 let full = try await AI.stream(AIConfig.current(), system: system, history: history, web: web,
                                                onThinking: { [weak self] n in
-                                                   guard let self, myGen == self.gen, acc.value.isEmpty else { return }
+                                                   guard let self, self.shown(key, myGen), acc.value.isEmpty else { return }
                                                    self.setStatus("深度思考中…（已想 \(n) 字）")
                                                }) { [weak self] piece in
                     guard let self else { return }
                     acc.value += piece
                     let shown = acc.value
                     self.updateUI(isClip, answerID) { $0.text = shown; $0.waiting = false }
-                    if myGen == self.gen { self.setStatus("正在回答…") }
+                    if self.shown(key, myGen) { self.setStatus("正在回答…") }
                 }
                 if full.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     self.updateUI(isClip, answerID) { $0.text = "（没有收到回答）"; $0.waiting = false }
@@ -273,7 +292,7 @@ final class BarModel: ObservableObject {
                     self.updateUI(isClip, answerID) { $0.text = full; $0.waiting = false; $0.sources = found }
                     self.settle(isClip, userMsg, full)
                 }
-                if myGen == self.gen { self.setStatus(nil) }
+                if self.shown(key, myGen) { self.setStatus(nil) }
             } catch is CancellationError {
                 let partial = acc.value
                 if partial.isEmpty { self.updateUI(isClip, answerID) { $0.text = "（已停止）"; $0.waiting = false } }
@@ -285,9 +304,12 @@ final class BarModel: ObservableObject {
                     self.updateUI(isClip, answerID) { $0.text = "⚠ " + msg; $0.error = true; $0.waiting = false }
                 }
                 self.settle(isClip, userMsg, partial.isEmpty ? nil : partial)
-                if myGen == self.gen { self.setStatus(msg, error: true) }
+                if self.shown(key, myGen) { self.setStatus(msg, error: true) }
             }
-            if myGen == self.gen { self.busy = false }
+            if self.live(key, myGen) {
+                self.busyModes.remove(key)
+                self.tasks[key] = nil
+            }
         }
     }
 
@@ -342,7 +364,7 @@ final class BarModel: ObservableObject {
     func prepareClipboard() {
         let text = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let t = text, !t.isEmpty, t != clipText, t != ownCopy {
-            if busy { stop() }
+            if busyModes.contains(.clipboard) { stop(.clipboard) }
             clipText = t
             clipHistory.removeAll()
             clip.removeAll()

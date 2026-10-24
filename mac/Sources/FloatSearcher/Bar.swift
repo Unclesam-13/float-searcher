@@ -3,6 +3,11 @@ import Combine
 import SwiftUI
 
 /// 点悬浮图标后横向出现的输入窗。只隐藏不销毁，AI 对话会一直保留。
+/// 第一次点就能直接点中按钮、输入框（不用先点一下让窗口获得焦点）
+final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+}
+
 @MainActor
 final class BarController: NSObject, NSWindowDelegate {
     static let shared = BarController()
@@ -10,7 +15,7 @@ final class BarController: NSObject, NSWindowDelegate {
 
     let model: BarModel
     let panel: FloatPanel
-    private let host: NSHostingView<AnyView>
+    private let host: FirstMouseHostingView<AnyView>
     private var anchorTop: CGFloat = 0
     private var autoHiddenAt = Date.distantPast
     private var bag = Set<AnyCancellable>()
@@ -20,8 +25,8 @@ final class BarController: NSObject, NSWindowDelegate {
         panel = FloatPanel.make(NSRect(x: 0, y: 0, width: BarController.width, height: 80), canKey: true)
         panel.hasShadow = true
         let root = BarView(m: model, settings: AppSettings.shared)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        host = NSHostingView(rootView: AnyView(root))
+            .frame(maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .top)
+        host = FirstMouseHostingView(rootView: AnyView(root))
         host.sizingOptions = []
         panel.contentView = host
         super.init()
@@ -31,6 +36,7 @@ final class BarController: NSObject, NSWindowDelegate {
         // 内容变高变矮时，窗口跟着变，顶边不动
         model.$height
             .removeDuplicates()
+            .receive(on: DispatchQueue.main) // 等 SwiftUI 这一轮布局结束再改窗口大小
             .sink { [weak self] h in self?.applyHeight(h) }
             .store(in: &bag)
     }
@@ -61,8 +67,9 @@ final class BarController: NSObject, NSWindowDelegate {
         reposition()
         // 面板不激活本程序：你正在用的 App 保持在前台，但可以直接在这里打字
         panel.makeKeyAndOrderFront(nil)
-        model.focusTick += 1
         model.afterShow()
+        // 等界面画出来再给输入框焦点（第一次打开时也能直接打字）
+        DispatchQueue.main.async { [weak self] in self?.model.focusTick += 1 }
     }
 
     func hide() {
@@ -104,8 +111,8 @@ final class BarController: NSObject, NSWindowDelegate {
         var top = anchorTop
         // 放不下时整体往上挪
         if top - h < vf.minY + 4 { top = vf.minY + 4 + h }
-        panel.setFrame(NSRect(x: x, y: top - h, width: BarController.width, height: h), display: true)
-        panel.invalidateShadow()
+        panel.setFrame(NSRect(x: x, y: top - h, width: BarController.width, height: h), display: false)
+        DispatchQueue.main.async { [weak self] in self?.panel.invalidateShadow() }
     }
 }
 
@@ -157,6 +164,7 @@ struct BarView: View {
         .background(GeometryReader { g in Color.clear.preference(key: HeightKey.self, value: g.size.height) })
         .onPreferenceChange(HeightKey.self) { h in m.height = h }
         .onChange(of: m.focusTick) { _ in focused = true }
+        .onAppear { DispatchQueue.main.async { focused = true } }
         .onExitCommand { m.hide() }
     }
 
@@ -283,7 +291,7 @@ struct BarView: View {
     /// 第一行大字是主译文，后面每行是同义词 / 各种句式；点哪一行就复制哪一行
     private var translation: some View {
         VStack(alignment: .leading, spacing: 2) {
-            ForEach(Array(m.trLines.enumerated()), id: \.element.id) { i, line in
+            ForEach(Array(m.trLines.enumerated()), id: \.offset) { i, line in
                 TrRow(line: line, main: i == 0) { m.copy(line.text) }
             }
         }

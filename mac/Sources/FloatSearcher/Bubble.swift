@@ -12,6 +12,16 @@ final class FloatPanel: NSPanel {
         if let f = onCancel { f() } else { super.cancelOperation(sender) }
     }
 
+    /// 输入框里按 Esc 也直接收起（输入法正在拼字时除外，让它先取消拼写）
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown && event.keyCode == 53, let f = onCancel,
+           !((firstResponder as? NSTextView)?.hasMarkedText() ?? false) {
+            f()
+            return
+        }
+        super.sendEvent(event)
+    }
+
     static func make(_ rect: NSRect, canKey: Bool) -> FloatPanel {
         let p = FloatPanel(contentRect: rect, styleMask: [.borderless, .nonactivatingPanel],
                            backing: .buffered, defer: false)
@@ -217,6 +227,8 @@ final class BubbleController {
         closeFan()
         guard let d = NSApp.delegate as? AppDelegate else { return }
         NSMenu.popUpContextMenu(d.buildMenu(), with: event, for: view)
+        // 菜单弹出期间收不到「鼠标离开」：关掉菜单后检查一次
+        if !bubbleRect.contains(NSEvent.mouseLocation) { view.forceHoverOff() }
     }
 }
 
@@ -287,6 +299,14 @@ final class BubbleView: NSView {
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         applyColors()
+    }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        text.contentsScale = scale
+        ring.contentsScale = scale
+        text.setNeedsDisplay()
     }
 
     private func applyColors() {
@@ -417,6 +437,12 @@ final class BubbleView: NSView {
         ring.add(g, forKey: "pulse")
     }
 
+    func forceHoverOff() {
+        guard hovering else { return }
+        hovering = false
+        controller?.hoverEnded()
+    }
+
     func hoverOff() {
         setScale(1.0, spring: false)
         ring.removeAnimation(forKey: "pulse")
@@ -539,6 +565,15 @@ final class FanView: NSView {
         refreshStyles()
     }
 
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        let scale = window?.backingScaleFactor ?? 2
+        for p in pills {
+            p.text.contentsScale = scale
+            p.text.setNeedsDisplay()
+        }
+    }
+
     func refreshStyles() {
         let current = AppSettings.shared.mode
         effectiveAppearance.performAsCurrentDrawingAppearance {
@@ -603,6 +638,7 @@ final class FanView: NSView {
 
     func close() {
         for p in pills {
+            p.layer.removeAllAnimations() // 还没播完的展开动画不要再播
             let fade = CABasicAnimation(keyPath: "opacity")
             fade.fromValue = p.layer.presentation()?.opacity ?? 1
             fade.toValue = 0.0

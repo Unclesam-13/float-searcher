@@ -3,6 +3,7 @@
 set -euo pipefail
 N="${1:-0}"
 cd "$(dirname "$0")"
+swift build -c release --arch arm64 --arch x86_64
 BIN_DIR=$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)
 APP="build/划词助手.app"
 rm -rf build && mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"

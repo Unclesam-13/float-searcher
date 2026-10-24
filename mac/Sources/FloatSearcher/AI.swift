@@ -56,7 +56,7 @@ struct WebHooks {
 enum AI {
     static let session: URLSession = {
         let c = URLSessionConfiguration.default
-        c.timeoutIntervalForRequest = 60
+        c.timeoutIntervalForRequest = 180 // 推理模型思考时可能很久不出字
         c.timeoutIntervalForResource = 600
         return URLSession(configuration: c)
     }()
@@ -130,6 +130,7 @@ enum AI {
 
         var content = ""
         var reasoning = ""
+        var reasoningChars = 0
         var tools: [Int: ToolCall] = [:]
         do {
             for try await line in bytes.lines {
@@ -162,7 +163,8 @@ enum AI {
                       let delta = c0["delta"] as? [String: Any] else { continue }
                 if let r = delta["reasoning_content"] as? String, !r.isEmpty {
                     reasoning += r
-                    onThinking?(reasoning.count)
+                    reasoningChars += r.count
+                    onThinking?(reasoningChars)
                 }
                 // 工具调用（联网搜索）分成很多碎片流过来，按 index 拼起来
                 if collectTools, let tcs = delta["tool_calls"] as? [[String: Any]] {
@@ -359,7 +361,7 @@ enum AI {
         let urlStr = cfg.base.hasSuffix("/v1") ? cfg.base + "/messages" : cfg.base + "/v1/messages"
         guard let url = URL(string: urlStr) else { throw AIError("接口地址不对：\(cfg.base)") }
         let msgs: [[String: Any]] = history.map { ["role": $0.role, "content": $0.content] }
-        let body: [String: Any] = ["model": cfg.model, "max_tokens": 2048, "stream": true, "system": system, "messages": msgs]
+        let body: [String: Any] = ["model": cfg.model, "max_tokens": 4096, "stream": true, "system": system, "messages": msgs]
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
