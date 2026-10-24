@@ -8,6 +8,7 @@ on:
     paths-ignore:
       - "windows/**"
       - ".github/workflows/windows.yml"
+      - "**.md"
   workflow_dispatch:
 
 permissions:
