@@ -142,7 +142,10 @@ struct BarView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             topRow
-            if m.mode == .clipboard, let t = m.clipText {
+            if m.mode == .clipboard, let img = m.clipImage {
+                imageCard(img)
+                chips
+            } else if m.mode == .clipboard, let t = m.clipText {
                 clipCard(t)
                 chips
             }
@@ -245,10 +248,32 @@ struct BarView: View {
         .help("点一下展开 / 收起")
     }
 
+    /// 剪贴板里的图片：缩略图，点一下放大 / 缩小
+    private func imageCard(_ img: NSImage) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Text("剪贴板 · \(m.clipImageInfo)")
+                .font(.system(size: 11.5, weight: .semibold))
+                .foregroundColor(.tAccent)
+            Image(nsImage: img)
+                .resizable()
+                .interpolation(.high)
+                .aspectRatio(contentMode: .fit)
+                .frame(maxHeight: m.clipExpanded ? 320 : 96, alignment: .leading)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.tQuote))
+        .contentShape(Rectangle())
+        .onTapGesture { m.clipExpanded.toggle() }
+        .help("点一下放大 / 缩小")
+    }
+
     private var chips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 6) {
-                ForEach(Array(settings.presetList.enumerated()), id: \.offset) { _, p in
+                ForEach(Array(m.chipList.enumerated()), id: \.offset) { _, p in
                     Button(action: { m.sendClip(display: p.name, prompt: p.prompt, includeText: true) }) {
                         Text(p.name)
                             .font(.system(size: 12.5))

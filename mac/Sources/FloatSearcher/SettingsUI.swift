@@ -125,7 +125,7 @@ struct SettingsView: View {
             }
 
             Section("剪贴板") {
-                Text("复制一段文字后单击悬浮图标，内容会自动放进对话。粘贴之后：")
+                Text("复制一段文字或一张图片（截图、网页图片、访达里的图片文件）后单击悬浮图标，内容会自动放进对话。剪贴板里同时有文字和图片时用文字。粘贴之后：")
                     .font(.caption).foregroundColor(.secondary)
                 Picker("", selection: $s.clipAction) {
                     Text("自动用下面的提示词发送（最快）").tag(ClipAction.autoSend)
@@ -133,11 +133,25 @@ struct SettingsView: View {
                 }
                 .pickerStyle(.radioGroup)
                 .labelsHidden()
-                TextEditor(text: $s.clipPrompt)
-                    .font(.body)
-                    .frame(minHeight: 40)
-                    .disabled(s.clipAction != .autoSend)
-                    .opacity(s.clipAction == .autoSend ? 1 : 0.5)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("复制的是文字时，自动发送用的提示词").font(.caption).foregroundColor(.secondary)
+                    TextEditor(text: $s.clipPrompt)
+                        .font(.body)
+                        .frame(minHeight: 40)
+                }
+                .disabled(s.clipAction != .autoSend)
+                .opacity(s.clipAction == .autoSend ? 1 : 0.5)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("复制的是图片时，自动发送用的提示词").font(.caption).foregroundColor(.secondary)
+                    TextEditor(text: $s.clipImagePrompt)
+                        .font(.body)
+                        .frame(minHeight: 40)
+                }
+                .disabled(s.clipAction != .autoSend)
+                .opacity(s.clipAction == .autoSend ? 1 : 0.5)
+                Text("图片提问需要能看图的模型：Claude，或 DeepSeek 的 deepseek-flash（选了别的 DeepSeek 模型时，带图的提问会自动改用 flash）。")
+                    .font(.caption).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("快捷提示词（输入窗里显示成按钮，点一下就对剪贴板内容提问）。每行一个：名称 | 要 AI 做什么")
                         .font(.caption).foregroundColor(.secondary)

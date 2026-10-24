@@ -96,6 +96,7 @@ final class AppSettings: ObservableObject {
     @Published var clipAction: ClipAction { didSet { d.set(clipAction.rawValue, forKey: "clipAction") } }
     @Published var clipPrompt: String { didSet { d.set(clipPrompt, forKey: "clipPrompt") } }
     @Published var clipPresets: String { didSet { d.set(clipPresets, forKey: "clipPresets") } }
+    @Published var clipImagePrompt: String { didSet { d.set(clipImagePrompt, forKey: "clipImagePrompt") } }
 
     // ---- 悬浮图标 ----
     @Published var bubbleOpacity: Double { didSet { d.set(bubbleOpacity, forKey: "bubbleOpacity") } }
@@ -103,6 +104,7 @@ final class AppSettings: ObservableObject {
     static let defaultChatSystem =
         "你是电脑桌面上的悬浮助手。回答简洁清晰，先给结论再解释；需要时用短列表，少用标题和表格。默认用简体中文回答。"
     static let defaultClipPrompt = "请解释这段内容。如果是外文，先翻译成中文再解释。"
+    static let defaultClipImagePrompt = "请说明这张图片的内容。如果图里有文字，先把文字提取出来；如果是外文，再翻译成中文。"
     static let defaultClipPresets = """
         解释 | 用通俗的话解释这段内容。
         翻译成中文 | 把这段内容翻译成自然流畅的中文，只给译文。
@@ -139,6 +141,7 @@ final class AppSettings: ObservableObject {
         clipAction = ClipAction(rawValue: ud.string(forKey: "clipAction") ?? "") ?? .autoSend
         clipPrompt = str("clipPrompt", AppSettings.defaultClipPrompt)
         clipPresets = str("clipPresets", AppSettings.defaultClipPresets)
+        clipImagePrompt = str("clipImagePrompt", AppSettings.defaultClipImagePrompt)
 
         bubbleOpacity = ud.object(forKey: "bubbleOpacity") == nil ? 0.95 : ud.double(forKey: "bubbleOpacity")
     }

@@ -4,6 +4,26 @@ struct ChatMsg: Identifiable {
     let id = UUID()
     var role: String
     var content: String
+    /// 可选的图片（JPEG，base64），只放在用户消息里
+    var image: String? = nil
+
+    /// OpenAI 兼容格式：有图片时是「文字 + 图片」数组
+    var openAIContent: Any {
+        guard let img = image else { return content }
+        return [
+            ["type": "text", "text": content] as [String: Any],
+            ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + img]] as [String: Any],
+        ]
+    }
+
+    /// Claude 格式：图片块在前，文字在后
+    var anthropicContent: Any {
+        guard let img = image else { return content }
+        return [
+            ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": img]] as [String: Any],
+            ["type": "text", "text": content] as [String: Any],
+        ]
+    }
 }
 
 /// 一条搜索结果；index 在整次回答里唯一，回答里用 [index] 引用
@@ -62,13 +82,32 @@ enum AI {
     }()
 
     static func stream(
-        _ cfg: AIConfig, system: String, history: [ChatMsg],
+        _ cfg0: AIConfig, system: String, history: [ChatMsg],
         noThinking: Bool = false, web: WebHooks? = nil,
         onThinking: ((Int) -> Void)? = nil,
         onDelta: @escaping (String) -> Void
     ) async throws -> String {
+        var cfg = cfg0
         if cfg.key.isEmpty { throw AIError("还没填 API Key：点菜单栏里的图标 → 设置。") }
         if cfg.model.isEmpty { throw AIError("还没填模型名：点菜单栏里的图标 → 设置。") }
+        let hasImage = history.contains { $0.image != nil }
+        // DeepSeek 只有 deepseek-flash 能看图：带图片时自动用它
+        if hasImage && cfg.provider == .deepseek { cfg.model = "deepseek-flash" }
+        do {
+            return try await streamInner(cfg, system: system, history: history, noThinking: noThinking,
+                                         web: web, onThinking: onThinking, onDelta: onDelta)
+        } catch let e as AIError where hasImage && e.message.hasPrefix("请求有误") {
+            throw AIError(e.message.replacingOccurrences(of: "请求有误，常见原因是模型名写错",
+                                                         with: "所选模型可能不支持图片，换个能看图的模型再试"))
+        }
+    }
+
+    private static func streamInner(
+        _ cfg: AIConfig, system: String, history: [ChatMsg],
+        noThinking: Bool, web: WebHooks?,
+        onThinking: ((Int) -> Void)?,
+        onDelta: @escaping (String) -> Void
+    ) async throws -> String {
 
         switch cfg.provider {
         case .anthropic:
@@ -79,7 +118,7 @@ enum AI {
             return try await webLoop(cfg, system: system, history: history, web: web!, onDelta: onDelta)
         default:
             var msgs: [[String: Any]] = [["role": "system", "content": system]]
-            for m in history { msgs.append(["role": m.role, "content": m.content]) }
+            for m in history { msgs.append(["role": m.role, "content": m.openAIContent]) }
             var body: [String: Any] = ["model": cfg.model, "stream": true, "messages": msgs]
             if cfg.provider == .deepseek {
                 // DeepSeek 默认开启思考；这里默认关掉求快，设置里可打开
@@ -226,7 +265,7 @@ enum AI {
     static func webLoop(_ cfg: AIConfig, system: String, history: [ChatMsg], web: WebHooks,
                         onDelta: @escaping (String) -> Void) async throws -> String {
         var msgs: [[String: Any]] = [["role": "system", "content": system + webNote()]]
-        for m in history { msgs.append(["role": m.role, "content": m.content]) }
+        for m in history { msgs.append(["role": m.role, "content": m.openAIContent]) }
         let question = history.last(where: { $0.role == "user" })?.content ?? ""
         var hits: [SearchHit] = []
         var round = 0
@@ -360,7 +399,7 @@ enum AI {
     static func anthropicRequest(_ cfg: AIConfig, system: String, history: [ChatMsg]) throws -> URLRequest {
         let urlStr = cfg.base.hasSuffix("/v1") ? cfg.base + "/messages" : cfg.base + "/v1/messages"
         guard let url = URL(string: urlStr) else { throw AIError("接口地址不对：\(cfg.base)") }
-        let msgs: [[String: Any]] = history.map { ["role": $0.role, "content": $0.content] }
+        let msgs: [[String: Any]] = history.map { ["role": $0.role, "content": $0.anthropicContent] }
         let body: [String: Any] = ["model": cfg.model, "max_tokens": 4096, "stream": true, "system": system, "messages": msgs]
         var req = URLRequest(url: url)
         req.httpMethod = "POST"

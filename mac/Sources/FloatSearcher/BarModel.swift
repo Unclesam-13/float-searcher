@@ -26,6 +26,12 @@ final class BarModel: ObservableObject {
     @Published var chat: [UIMsg] = []
     @Published var clip: [UIMsg] = []
     @Published var clipText: String?
+    /// 剪贴板里的图片（没有文字时才用）：缩略图 + 发给 AI 的 JPEG
+    @Published var clipImage: NSImage?
+    @Published var clipImageInfo = ""
+    private var clipImageB64: String?
+    private var clipImageChange = -1   // 读到这张图时剪贴板的 changeCount
+    var hasClip: Bool { clipText != nil || clipImage != nil }
     @Published var clipExpanded = false
     @Published var status: String?
     @Published var statusError = false
@@ -79,8 +85,18 @@ final class BarModel: ObservableObject {
     func afterShow() {
         if mode == .clipboard && pendingAutoSend {
             pendingAutoSend = false
-            sendClip(display: s.clipPrompt, prompt: s.clipPrompt, includeText: true)
+            let p = clipImage != nil ? s.clipImagePrompt : s.clipPrompt
+            sendClip(display: p, prompt: p, includeText: true)
         }
+    }
+
+    /// 快捷提示词按钮；剪贴板是图片时最前面多一个「提取文字」
+    var chipList: [(name: String, prompt: String)] {
+        var list = s.presetList
+        if clipImage != nil {
+            list.insert(("提取文字", "把图片里的文字原样提取出来，保持原有的分段和顺序，不要解释。"), at: 0)
+        }
+        return list
     }
 
     func willHide() {
@@ -94,8 +110,9 @@ final class BarModel: ObservableObject {
         case .translate: return "输入中文，回车翻译成英文"
         case .chat: return "问点什么，回车发送（⌥+回车换行）"
         case .clipboard:
-            if clipText == nil { return "先复制一段文字，再点悬浮图标" }
-            return clip.isEmpty ? "对这段内容说点什么，回车发送" : "继续追问，回车发送"
+            if !hasClip { return "先复制一段文字或一张图片，再点悬浮图标" }
+            if !clip.isEmpty { return "继续追问，回车发送" }
+            return clipImage != nil ? "对这张图片说点什么，回车发送" : "对这段内容说点什么，回车发送"
         }
     }
 
@@ -124,12 +141,13 @@ final class BarModel: ObservableObject {
             input = ""
             converse(isClip: false, display: text, content: text)
         case .clipboard:
-            guard clipText != nil else {
-                setStatus("剪贴板里没有文字。先复制，再点悬浮图标。", error: true)
+            guard hasClip else {
+                setStatus("剪贴板里没有文字或图片。先复制，再点悬浮图标。", error: true)
                 return
             }
             guard !text.isEmpty else { return }
             input = ""
+            // 图片已经在第一问里了，追问时不用再带（对话记录里保留着）
             sendClip(display: text, prompt: text, includeText: clipHistory.isEmpty)
         }
     }
@@ -240,12 +258,12 @@ final class BarModel: ObservableObject {
 
     // ================= 对话（AI 对话、剪贴板共用） =================
 
-    func converse(isClip: Bool, display: String, content: String) {
+    func converse(isClip: Bool, display: String, content: String, image: String? = nil) {
         let key: Mode = isClip ? .clipboard : .chat
         stop(key)
         let myGen = bump(key)
 
-        let userMsg = ChatMsg(role: "user", content: content)
+        let userMsg = ChatMsg(role: "user", content: content, image: image)
         appendHistory(isClip, userMsg)
         appendUI(isClip, UIMsg(user: true, text: display))
         let answer = UIMsg(user: false, text: "…", waiting: true)
@@ -360,24 +378,51 @@ final class BarModel: ObservableObject {
 
     // ================= 剪贴板 =================
 
-    /// 读剪贴板：内容变了就开始一段新对话
+    /// 读剪贴板：有文字用文字，没有文字再看有没有图片；内容变了就开始一段新对话
     func prepareClipboard() {
-        let text = NSPasteboard.general.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let t = text, !t.isEmpty, t != clipText, t != ownCopy {
-            if busyModes.contains(.clipboard) { stop(.clipboard) }
-            clipText = t
-            clipHistory.removeAll()
-            clip.removeAll()
-            clipExpanded = false
-            // 「粘贴后自动发送」：显示出来后立刻用预设提示词发送
-            pendingAutoSend = s.clipAction == .autoSend
+        let pb = NSPasteboard.general
+        let text = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let t = text, !t.isEmpty {
+            if t != clipText && t != ownCopy {
+                startClip()
+                clipText = t
+            }
+        } else if pb.changeCount != clipImageChange, let img = ClipImage.read(pb) {
+            clipImageChange = pb.changeCount
+            if let enc = ClipImage.jpegBase64(img) {
+                startClip()
+                clipImage = img
+                clipImageB64 = enc.base64
+                clipImageInfo = "图片 \(enc.width)×\(enc.height)"
+            } else {
+                setStatus("这张图片读不出来，换一张试试", error: true)
+            }
         }
-        if clipText == nil {
-            setStatus("剪贴板里没有文字。先复制一段，再点悬浮图标。", error: true)
+        if !hasClip {
+            setStatus("剪贴板里没有文字或图片。先复制一段文字或一张图片，再点悬浮图标。", error: true)
         }
     }
 
+    /// 换了新的剪贴板内容：清掉旧对话
+    private func startClip() {
+        if busyModes.contains(.clipboard) { stop(.clipboard) }
+        clipText = nil
+        clipImage = nil
+        clipImageB64 = nil
+        clipImageInfo = ""
+        clipHistory.removeAll()
+        clip.removeAll()
+        clipExpanded = false
+        // 「粘贴后自动发送」：显示出来后立刻用预设提示词发送
+        pendingAutoSend = s.clipAction == .autoSend
+    }
+
     func sendClip(display: String, prompt: String, includeText: Bool) {
+        if let img = clipImageB64 {
+            // 图片：第一次提问（或点快捷按钮）时把图片带上
+            converse(isClip: true, display: display, content: prompt, image: includeText ? img : nil)
+            return
+        }
         guard let t = clipText else { return }
         let content = includeText ? prompt + "\n\n内容：\n\"\"\"\n" + t + "\n\"\"\"" : prompt
         converse(isClip: true, display: display, content: content)
