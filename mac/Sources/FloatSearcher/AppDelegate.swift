@@ -2,6 +2,7 @@ import AppKit
 
 /// 程序入口：不在程序坞显示，只有屏幕上的悬浮图标和右上角菜单栏图标
 @main
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     static func main() {
         let app = NSApplication.shared
