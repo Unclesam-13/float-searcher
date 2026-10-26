@@ -468,7 +468,7 @@ namespace FloatSearcher
             var body = new JsonObject
             {
                 ["model"] = model,
-                ["max_tokens"] = 2048,
+                ["max_tokens"] = 8192,
                 ["stream"] = true,
                 ["system"] = system,
                 ["messages"] = msgs,

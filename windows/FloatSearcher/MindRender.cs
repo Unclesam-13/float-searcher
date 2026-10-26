@@ -114,7 +114,7 @@ namespace FloatSearcher
         }
 
         /// <summary>比较时忽略空白和 Markdown 符号，划线原文从这边或 Obsidian 来都能对上</summary>
-        static bool Skip(char c) => char.IsWhiteSpace(c) || c == '•' || c == '*' || c == '`' || c == '#' || c == '>' || c == '│' || c == '$';
+        static bool Skip(char c) => char.IsWhiteSpace(c) || c == '•' || c == '*' || c == '`' || c == '#' || c == '>' || c == '│' || c == '$' || c == '☐' || c == '☑';
 
         public static string Condense(string s)
         {

@@ -35,10 +35,10 @@ namespace FloatSearcher
     public class MindNode
     {
         public string Id { get; set; }
-        public string ParentId { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public string ParentId { get; set; }
         /// <summary>从父窗口哪条回答的哪段话追问出来的；主线为空</summary>
-        public MindAnchor Anchor { get; set; }
-        public string Title { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public MindAnchor Anchor { get; set; }
+        [JsonIgnore(Condition = JsonIgnoreCondition.Never)] public string Title { get; set; }
         public long CreatedAt { get; set; }
         public List<MindMsg> Messages { get; set; } = new List<MindMsg>();
         [JsonExtensionData] public Dictionary<string, JsonElement> Extra { get; set; }
@@ -268,6 +268,13 @@ namespace FloatSearcher
         {
             var chain = ChainOf(s, nodeId);
             var msgs = new List<ChatMsg>();
+            // 图片只发当前窗口最近两次带图的提问，更早的用文字代替，免得每轮都重发
+            var recentImg = new HashSet<string>();
+            if (chain.Count > 0)
+                foreach (var m in chain[^1].Messages.Where(x => x.Role == "user" && x.Images.Any()
+                                                              && (uptoMsgId == null || x.CreatedAt <= (chain[^1].Messages.FirstOrDefault(y => y.Id == uptoMsgId)?.CreatedAt ?? long.MaxValue)))
+                                                    .Reverse().Take(2))
+                    recentImg.Add(m.Id);
             for (int idx = 0; idx < chain.Count; idx++)
             {
                 var node = chain[idx];
@@ -279,9 +286,12 @@ namespace FloatSearcher
                 foreach (var m in node.Messages)
                 {
                     if (isCur && uptoMsgId != null && m.Id == uptoMsgId) break;
-                    if (!m.Pending && !string.IsNullOrEmpty(m.Content))
+                    // 出错的回答不当成上下文；停止生成的只留已写出的部分
+                    bool failed = m.Role == "assistant" && (m.Content ?? "").StartsWith("❌");
+                    if (!m.Pending && !failed && !string.IsNullOrEmpty(m.Content))
                     {
-                        var c = m.Content;
+                        var c = m.Content.Replace("\n\n*（已停止生成）*", "").Replace("*（已停止生成）*", "");
+                        if (c.Trim().Length == 0) { if (stopAfter != null && m.Id == stopAfter) break; continue; }
                         List<string> images = null;
                         if (m.Role == "user")
                         {
@@ -295,7 +305,7 @@ namespace FloatSearcher
                                         c += $"\n\n【附件：{a.Name}】\n{a.Text}";
                                 var imgs = m.Images.ToList();
                                 // 只给当前窗口的图片发原图，上层窗口的用文字代替，免得请求太大
-                                if (imgs.Count > 0 && isCur && loadImage != null)
+                                if (imgs.Count > 0 && isCur && loadImage != null && recentImg.Contains(m.Id))
                                 {
                                     images = new List<string>();
                                     foreach (var a in imgs) { var b64 = loadImage(a); if (b64 != null) images.Add(b64); }
@@ -345,20 +355,39 @@ namespace FloatSearcher
         public static string DefaultFolder => Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FloatSearcher", "对话数据");
 
+        /// <summary>保存出错时通知界面（文件夹没权限、被同步软件锁住等）</summary>
+        public event Action<string> Error;
+
+        /// <summary>界面正在用的对话（当前对话、正在回答的）：磁盘上的文件变了也不换成新读的对象</summary>
+        public Func<string, bool> InUse;
+
         public string Folder
         {
             get
             {
-                var f = (App.Settings?.MindFolder ?? "").Trim();
-                return f.Length > 0 ? Environment.ExpandEnvironmentVariables(f) : DefaultFolder;
+                var f = Environment.ExpandEnvironmentVariables((App.Settings?.MindFolder ?? "").Trim());
+                if (f.Length == 0) return DefaultFolder;
+                try
+                {
+                    // 相对路径以 %APPDATA%\FloatSearcher 为准（开机自启时当前目录是 System32）
+                    if (!System.IO.Path.IsPathFullyQualified(f))
+                        f = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "FloatSearcher", f);
+                    return System.IO.Path.GetFullPath(f);
+                }
+                catch { return DefaultFolder; }
             }
         }
 
         readonly Dictionary<string, (MindSession s, DateTime mtime)> _cache = new Dictionary<string, (MindSession, DateTime)>();
         readonly Dictionary<string, DispatcherTimer> _timers = new Dictionary<string, DispatcherTimer>();
+        readonly Dictionary<string, MindSession> _toWrite = new Dictionary<string, MindSession>();
+        /// <summary>每个对话对应的文件（读进来的就写回原文件，换了保存位置也不会写错地方）</summary>
+        readonly Dictionary<string, string> _paths = new Dictionary<string, string>();
+        readonly HashSet<string> _unsaved = new HashSet<string>();
+        readonly HashSet<string> _deleted = new HashSet<string>();
         string _cacheFolder;
 
-        string PathOf(string id) => System.IO.Path.Combine(Folder, id + ".json");
+        string PathOf(string id) => _paths.TryGetValue(id, out var p) ? p : System.IO.Path.Combine(Folder, id + ".json");
 
         // ---------------- 附件 ----------------
         // 插件的布局：<库>/<Mindflow>/对话数据/*.json 和 <库>/<Mindflow>/附件/，消息里记「相对库根目录」的路径。
@@ -368,24 +397,31 @@ namespace FloatSearcher
         {
             get
             {
-                var f = Folder.TrimEnd('\\', '/');
+                var f = System.IO.Path.TrimEndingDirectorySeparator(Folder);
                 return string.Equals(System.IO.Path.GetFileName(f), "对话数据", StringComparison.OrdinalIgnoreCase)
                     ? (System.IO.Path.GetDirectoryName(f) ?? f) : f;
             }
         }
+
+        string _rootFor, _rootVal;
 
         string BaseRoot
         {
             get
             {
                 var chat = ChatDir;
+                if (_rootFor == chat && _rootVal != null) return _rootVal;
+                string root = null;
                 try
                 {
                     for (var d = new DirectoryInfo(chat); d != null; d = d.Parent)
-                        if (Directory.Exists(System.IO.Path.Combine(d.FullName, ".obsidian"))) return d.FullName;
+                        if (Directory.Exists(System.IO.Path.Combine(d.FullName, ".obsidian"))) { root = d.FullName; break; }
                 }
                 catch { }
-                return System.IO.Path.GetDirectoryName(chat) ?? chat;
+                root ??= System.IO.Path.GetDirectoryName(chat) ?? chat;
+                _rootFor = chat;
+                _rootVal = root;
+                return root;
             }
         }
 
@@ -396,12 +432,16 @@ namespace FloatSearcher
         {
             if (string.IsNullOrEmpty(a?.Path)) return null;
             var rel = a.Path.Replace('/', System.IO.Path.DirectorySeparatorChar);
-            if (System.IO.Path.IsPathRooted(rel)) return rel;
-            var p = System.IO.Path.Combine(BaseRoot, rel);
-            if (File.Exists(p)) return p;
-            // 兜底：按文件名在附件文件夹里找
-            var q = System.IO.Path.Combine(AttachDir, System.IO.Path.GetFileName(rel));
-            return File.Exists(q) ? q : p;
+            try
+            {
+                if (System.IO.Path.IsPathFullyQualified(rel)) return rel;
+                var p = System.IO.Path.Combine(BaseRoot, rel);
+                if (File.Exists(p)) return p;
+                // 兜底：按文件名在附件文件夹里找
+                var q = System.IO.Path.Combine(AttachDir, System.IO.Path.GetFileName(rel));
+                return File.Exists(q) ? q : p;
+            }
+            catch { return null; }
         }
 
         /// <summary>把一张 JPEG 存进附件文件夹，返回附件记录</summary>
@@ -426,10 +466,12 @@ namespace FloatSearcher
 
         void CheckFolder()
         {
-            if (_cacheFolder == Folder) return;
-            Flush();
+            var f = Folder;
+            if (_cacheFolder == f) return;
+            Flush(); // 先把没写完的写回各自原来的文件
             _cache.Clear();
-            _cacheFolder = Folder;
+            _unsaved.Clear();
+            _cacheFolder = f;
         }
 
         /// <summary>所有对话，最近的在前。文件没变就用缓存。</summary>
@@ -444,13 +486,21 @@ namespace FloatSearcher
                 {
                     foreach (var f in Directory.EnumerateFiles(dir, "*.json"))
                     {
-                        var id = System.IO.Path.GetFileNameWithoutExtension(f);
-                        seen.Add(id);
                         DateTime mt;
                         try { mt = File.GetLastWriteTimeUtc(f); } catch { continue; }
-                        if (_cache.TryGetValue(id, out var c) && (c.mtime == mt || _timers.ContainsKey(id))) continue;
+                        var known = _paths.FirstOrDefault(kv => string.Equals(kv.Value, f, StringComparison.OrdinalIgnoreCase)).Key
+                                    ?? System.IO.Path.GetFileNameWithoutExtension(f);
+                        if (_cache.TryGetValue(known, out var c))
+                        {
+                            seen.Add(known);
+                            if (c.mtime == mt || _timers.ContainsKey(known) || (InUse?.Invoke(known) ?? false)) continue;
+                        }
                         var s = Read(f);
-                        if (s != null) _cache[id] = (s, mt);
+                        if (s == null || _deleted.Contains(s.Id)) continue;
+                        seen.Add(s.Id);
+                        if (_cache.TryGetValue(s.Id, out var c2) && (_timers.ContainsKey(s.Id) || (InUse?.Invoke(s.Id) ?? false))) continue;
+                        _cache[s.Id] = (s, mt);
+                        _paths[s.Id] = f;
                     }
                 }
             }
@@ -461,14 +511,13 @@ namespace FloatSearcher
             return _cache.Values.Select(v => v.s).OrderByDescending(s => s.UpdatedAt).ToList();
         }
 
-        readonly HashSet<string> _unsaved = new HashSet<string>();
-
         static MindSession Read(string file)
         {
             try
             {
                 var s = JsonSerializer.Deserialize<MindSession>(File.ReadAllText(file, Encoding.UTF8), Json);
-                if (s == null || string.IsNullOrEmpty(s.Id) || s.Nodes == null || s.Nodes.Count == 0) return null;
+                if (s == null || s.Nodes == null || s.Nodes.Count == 0) return null;
+                if (string.IsNullOrEmpty(s.Id)) s.Id = System.IO.Path.GetFileNameWithoutExtension(file);
                 foreach (var kv in s.Nodes)
                 {
                     kv.Value.Id ??= kv.Key;
@@ -485,20 +534,28 @@ namespace FloatSearcher
         {
             CheckFolder();
             _cache[s.Id] = (s, DateTime.MinValue);
+            _paths[s.Id] = System.IO.Path.Combine(Folder, s.Id + ".json");
             _unsaved.Add(s.Id);
         }
 
         /// <summary>保存：默认合并 0.4 秒内的多次修改；immediate 立刻写</summary>
         public void Save(MindSession s, bool immediate = false)
         {
+            if (_deleted.Contains(s.Id)) return;
             s.UpdatedAt = Mind.Now();
+            _toWrite[s.Id] = s;
             if (_timers.TryGetValue(s.Id, out var t)) t.Stop();
-            if (immediate) { _timers.Remove(s.Id); Write(s); return; }
+            if (immediate) { _timers.Remove(s.Id); _toWrite.Remove(s.Id); Write(s); return; }
             if (t == null)
             {
+                var id = s.Id;
                 t = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
-                var sess = s;
-                t.Tick += (o, e) => { t.Stop(); _timers.Remove(sess.Id); Write(sess); };
+                t.Tick += (o, e) =>
+                {
+                    ((DispatcherTimer)o).Stop();
+                    _timers.Remove(id);
+                    if (_toWrite.Remove(id, out var obj)) Write(obj);
+                };
                 _timers[s.Id] = t;
             }
             t.Start();
@@ -506,35 +563,44 @@ namespace FloatSearcher
 
         public void Flush()
         {
-            foreach (var kv in _timers.ToList())
-            {
-                kv.Value.Stop();
-                if (_cache.TryGetValue(kv.Key, out var c)) Write(c.s);
-            }
+            foreach (var kv in _timers.ToList()) kv.Value.Stop();
             _timers.Clear();
+            foreach (var kv in _toWrite.ToList()) Write(kv.Value);
+            _toWrite.Clear();
         }
 
         void Write(MindSession s)
         {
+            if (_deleted.Contains(s.Id)) return;
             try
             {
-                Directory.CreateDirectory(Folder);
                 var path = PathOf(s.Id);
+                Directory.CreateDirectory(System.IO.Path.GetDirectoryName(path));
                 var tmp = path + ".tmp";
                 File.WriteAllText(tmp, JsonSerializer.Serialize(s, Json), new UTF8Encoding(false));
                 File.Move(tmp, path, true);
+                _paths[s.Id] = path;
                 _unsaved.Remove(s.Id);
-                _cache[s.Id] = (s, File.GetLastWriteTimeUtc(path));
+                // 换过保存位置的旧对话不放进新位置的列表
+                if (string.Equals(System.IO.Path.GetDirectoryName(path), System.IO.Path.TrimEndingDirectorySeparator(Folder), StringComparison.OrdinalIgnoreCase))
+                    _cache[s.Id] = (s, File.GetLastWriteTimeUtc(path));
             }
-            catch { }
+            catch (Exception e)
+            {
+                Error?.Invoke("对话没保存成功：" + e.Message + "（可以在设置里换一个保存位置）");
+            }
         }
 
         public void Delete(string id)
         {
+            _deleted.Add(id);
             if (_timers.TryGetValue(id, out var t)) { t.Stop(); _timers.Remove(id); }
+            _toWrite.Remove(id);
+            var p = PathOf(id);
             _cache.Remove(id);
             _unsaved.Remove(id);
-            try { var p = PathOf(id); if (File.Exists(p)) File.Delete(p); } catch { }
+            _paths.Remove(id);
+            try { if (File.Exists(p)) File.Delete(p); } catch { }
         }
     }
 }

@@ -45,7 +45,7 @@ namespace FloatSearcher
         protected override void OnExit(ExitEventArgs e)
         {
             Settings?.Save();
-            try { MindStore.Shared.Flush(); } catch { }
+            try { InputBar.Current?.MindShutdown(); MindStore.Shared.Flush(); } catch { }
             try { _single?.ReleaseMutex(); } catch { }
             base.OnExit(e);
         }

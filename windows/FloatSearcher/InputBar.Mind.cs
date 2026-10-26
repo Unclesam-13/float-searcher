@@ -85,7 +85,7 @@ namespace FloatSearcher
             }
         }
 
-        bool IsCurrent(MindSession s, MindNode n) => s == _session && n != null && n.Id == _nodeId;
+        bool IsCurrent(MindSession s, MindNode n) => _mode == Mode.Chat && s == _session && n != null && n.Id == _nodeId;
 
         // ================= 初始化 =================
 
@@ -93,6 +93,8 @@ namespace FloatSearcher
         {
             _renderTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(90) };
             _renderTimer.Tick += (s, e) => FlushDirty();
+            _store.Error += msg => SetStatus(msg, true);
+            _store.InUse = id => (_session != null && _session.Id == id) || _running.Values.Any(r => r.S.Id == id);
 
             NewBtn.Click += (s, e) => MindNew();
             TreeBtn.Click += (s, e) => ToggleSide("tree");
@@ -129,6 +131,7 @@ namespace FloatSearcher
                     try { AddPending(LoadImageFile(f)); }
                     catch { SetStatus("这张图片打不开：" + Path.GetFileName(f), true); }
                 }
+                Activate();
                 Input.Focus();
             };
         }
@@ -228,6 +231,11 @@ namespace FloatSearcher
         void MindSubmit(string text)
         {
             if (_replyAnchor == null && text.Length == 0 && _pending.Count == 0) return;
+            if (_replyAnchor == null && MindCurrentRunning)
+            {
+                SetStatus("上一个回答还在写，写完再接着问（点 ■ 可以停止）。想追问上面的内容，选中那段文字就行。");
+                return;
+            }
             Input.Text = "";
             var images = TakePending();
 
@@ -270,9 +278,22 @@ namespace FloatSearcher
             s.Nodes[child.Id] = child;
             _nodeId = child.Id;
             _ = Ask(s, child, q.Length > 0 ? q : App.Settings.MindDefaultFollowUp, images);
+            FocusInput();
+        }
+
+        void FocusInput()
+        {
+            if (_mode != Mode.Chat || !IsVisible) return;
+            Dispatcher.BeginInvoke(new Action(() => { Input.Focus(); Keyboard.Focus(Input); }), DispatcherPriority.Input);
         }
 
         async Task Ask(MindSession s, MindNode node, string question, List<MindAttachment> images)
+        {
+            try { await AskInner(s, node, question, images); }
+            catch (Exception e) { SetStatus("出错了：" + e.Message, true); UpdateSendBtn(); }
+        }
+
+        async Task AskInner(MindSession s, MindNode node, string question, List<MindAttachment> images)
         {
             if (string.IsNullOrWhiteSpace(question))
                 question = images != null ? "请分析这张图片。" : App.Settings.MindDefaultFollowUp;
@@ -383,6 +404,9 @@ namespace FloatSearcher
         {
             var s = _session;
             if (s == null || _running.ContainsKey(m.Id)) return;
+            if (AnchorsFor(node, m).Count > 0 &&
+                MessageBox.Show(this, "这条回答下面有划线追问。重新回答后，原来划线的句子可能对不上，高亮会消失（追问本身还在问答树里）。继续？",
+                    "划词助手", MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK) return;
             m.Content = "";
             m.Sources = null;
             m.Extra?.Remove("editedAt");
@@ -390,7 +414,32 @@ namespace FloatSearcher
             m.CreatedAt = Mind.Now();
             m.Pending = true;
             var msgs = Mind.BuildThread(s, node.Id, LoadImageB64, uptoMsgId: m.Id);
-            _ = RunAnswer(s, node, m, msgs);
+            _ = RunSafe(s, node, m, msgs);
+        }
+
+        async Task RunSafe(MindSession s, MindNode node, MindMsg m, List<ChatMsg> msgs)
+        {
+            try { await RunAnswer(s, node, m, msgs); }
+            catch (Exception e) { SetStatus("出错了：" + e.Message, true); }
+        }
+
+        /// <summary>退出程序时：还在写的回答把已写出的部分存下来</summary>
+        public void MindShutdown()
+        {
+            foreach (var r in _running.Values.ToList())
+            {
+                try
+                {
+                    r.Client.Cancel();
+                    r.Msg.Pending = false;
+                    r.Msg.Content = (r.Msg.Content ?? "") + (string.IsNullOrEmpty(r.Msg.Content) ? "" : "\n\n") + "*（已停止生成）*";
+                    r.Msg.DoneAt = Mind.Now();
+                    _store.Save(r.S, true);
+                }
+                catch { }
+            }
+            _running.Clear();
+            _store.Flush();
         }
 
         // ================= 划线追问 =================
@@ -422,6 +471,8 @@ namespace FloatSearcher
                     Child = _selPopPanel,
                     Effect = new DropShadowEffect { BlurRadius = 14, ShadowDepth = 2, Opacity = 0.3 },
                 };
+                TextElement.SetFontFamily(border, (FontFamily)FindResource("UiFont"));
+                TextElement.SetFontSize(border, 13.0);
                 _selPop = new Popup
                 {
                     AllowsTransparency = true,
@@ -504,6 +555,7 @@ namespace FloatSearcher
             UpdateSendBtn();
             UpdatePlaceholder();
             SetStatus(MindCurrentRunning ? "正在回答…" : null);
+            FocusInput();
         }
 
         void OpenSession(MindSession s)
@@ -516,6 +568,7 @@ namespace FloatSearcher
             UpdateSendBtn();
             UpdatePlaceholder();
             SetStatus(null);
+            FocusInput();
         }
 
         /// <summary>回到分出这条追问的地方，并滚到那条回答</summary>
@@ -848,7 +901,7 @@ namespace FloatSearcher
         {
             _renderTimer.Stop();
             if (_dirty.Count == 0) return;
-            bool atEnd = OutScroll.VerticalOffset >= OutScroll.ScrollableHeight - 40;
+            bool atEnd = _mode == Mode.Chat && OutScroll.VerticalOffset >= OutScroll.ScrollableHeight - 40;
             foreach (var id in _dirty.ToList())
                 if (_views.TryGetValue(id, out var v)) UpdateView(v);
             _dirty.Clear();
@@ -857,6 +910,7 @@ namespace FloatSearcher
 
         void ScrollToEnd()
         {
+            if (_mode != Mode.Chat) return;
             Dispatcher.BeginInvoke(new Action(() => OutScroll.ScrollToEnd()), DispatcherPriority.Background);
         }
 
@@ -1074,6 +1128,8 @@ namespace FloatSearcher
             foreach (var r in _running.Values.ToList())
                 if (r.S == s && ids.Contains(r.Node.Id)) r.Client.Cancel();
             foreach (var id in ids) s.Nodes.Remove(id);
+            ClearReply();
+            MindClosePopup();
             if (_nodeId != null && ids.Contains(_nodeId)) _nodeId = node.ParentId;
             _store.Save(s, true);
             RenderMind();

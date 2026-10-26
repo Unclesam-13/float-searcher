@@ -508,7 +508,7 @@ namespace FloatSearcher
         protected override void OnClosed(EventArgs e)
         {
             _ai.Cancel();
-            MindStore.Shared.Flush();
+            MindShutdown();
             if (Current == this) Current = null;
             base.OnClosed(e);
         }
