@@ -15,7 +15,7 @@
             <Setter Property="Background" Value="Transparent" />
             <Setter Property="Cursor" Value="Hand" />
             <Setter Property="FontSize" Value="13" />
-            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="Padding" Value="9,0" />
             <Setter Property="Height" Value="32" />
             <Setter Property="MinWidth" Value="32" />
             <Setter Property="Focusable" Value="False" />
@@ -58,13 +58,13 @@
             </Setter>
         </Style>
 
-        <!-- 剪贴板模式的快捷提示词 -->
+        <!-- 圆角小按钮（预设问题、操作） -->
         <Style x:Key="ChipBtn" TargetType="Button" BasedOn="{StaticResource FlatBtn}">
             <Setter Property="Foreground" Value="{DynamicResource Ink}" />
             <Setter Property="Background" Value="{DynamicResource Surface2}" />
             <Setter Property="Height" Value="28" />
             <Setter Property="Margin" Value="0,0,6,6" />
-            <Setter Property="Padding" Value="12,0" />
+            <Setter Property="Padding" Value="11,0" />
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -81,10 +81,25 @@
                 </Setter.Value>
             </Setter>
         </Style>
+
+        <!-- 回答下面的小操作（复制、重新回答） -->
+        <Style x:Key="TinyBtn" TargetType="Button" BasedOn="{StaticResource FlatBtn}">
+            <Setter Property="FontSize" Value="12" />
+            <Setter Property="Height" Value="24" />
+            <Setter Property="MinWidth" Value="0" />
+            <Setter Property="Padding" Value="7,0" />
+        </Style>
+
+        <!-- 侧栏的标签 -->
+        <Style x:Key="TabBtn" TargetType="Button" BasedOn="{StaticResource FlatBtn}">
+            <Setter Property="Height" Value="28" />
+            <Setter Property="Padding" Value="10,0" />
+            <Setter Property="FontSize" Value="12.5" />
+        </Style>
     </Window.Resources>
 
     <!-- 外面留 12px 给阴影 -->
-    <Border x:Name="Card" Margin="12" CornerRadius="16"
+    <Border x:Name="Card" Margin="12" CornerRadius="16" AllowDrop="True"
             Background="{DynamicResource Surface}" BorderBrush="{DynamicResource Line}" BorderThickness="1">
         <Border.Effect>
             <DropShadowEffect BlurRadius="18" ShadowDepth="3" Opacity="0.28" />
@@ -110,19 +125,25 @@
                     <TextBox x:Name="Input" BorderThickness="0" Background="Transparent"
                              Foreground="{DynamicResource Ink}" CaretBrush="{DynamicResource Accent}"
                              SelectionBrush="{DynamicResource Accent}"
-                             FontSize="15.5" Padding="2,5,2,5"
+                             FontSize="15.5" Padding="2,5,2,5" AllowDrop="True"
                              AcceptsReturn="True" TextWrapping="Wrap" MaxHeight="130"
                              VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Center" />
                     <TextBlock x:Name="Placeholder" Text="输入中文，回车翻译成英文" FontSize="15.5"
-                               Foreground="{DynamicResource InkSoft}" Margin="4,0,0,0"
+                               Foreground="{DynamicResource InkSoft}" Margin="4,0,0,0" TextTrimming="CharacterEllipsis"
                                VerticalAlignment="Center" IsHitTestVisible="False" />
                 </Grid>
 
                 <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top" Margin="6,0,0,0">
+                    <Button x:Name="AttachBtn" Content="📎" Style="{StaticResource FlatBtn}" Padding="6,0"
+                            ToolTip="添加图片（也可以 Ctrl+V 粘贴截图，或把图片拖进来）" Visibility="Collapsed" />
                     <Button x:Name="WebBtn" Content="联网" Style="{StaticResource FlatBtn}"
                             ToolTip="DeepSeek 联网搜索：需要最新信息时自动搜索，回答附来源" Visibility="Collapsed" />
+                    <Button x:Name="TreeBtn" Content="问答树" Style="{StaticResource FlatBtn}"
+                            ToolTip="这段对话的所有追问，点哪跳哪" Visibility="Collapsed" />
+                    <Button x:Name="HistBtn" Content="历史" Style="{StaticResource FlatBtn}"
+                            ToolTip="以前的对话" Visibility="Collapsed" />
                     <Button x:Name="NewBtn" Content="新对话" Style="{StaticResource FlatBtn}"
-                            ToolTip="清空这段对话，重新开始" Visibility="Collapsed" />
+                            ToolTip="开始一段新对话（这段会留在历史里）" Visibility="Collapsed" />
                     <Button x:Name="SendBtn" Content="↵" Style="{StaticResource AccentBtn}"
                             Width="42" Margin="2,0,0,0" ToolTip="发送（回车）" />
                     <Button x:Name="CloseBtn" Content="✕" Style="{StaticResource FlatBtn}"
@@ -130,34 +151,74 @@
                 </StackPanel>
             </Grid>
 
-            <!-- 剪贴板内容 -->
-            <Border x:Name="ClipCard" Margin="0,8,0,0" CornerRadius="10" Padding="12,8"
-                    Background="{DynamicResource Quote}" Visibility="Collapsed" Cursor="Hand"
-                    ToolTip="点一下展开 / 收起">
-                <StackPanel>
-                    <TextBlock x:Name="ClipTitle" Text="剪贴板" FontSize="11.5"
-                               Foreground="{DynamicResource Accent}" FontWeight="SemiBold" />
-                    <TextBlock x:Name="ClipText" Margin="0,3,0,0" FontSize="13" TextWrapping="Wrap"
-                               Foreground="{DynamicResource InkSoft}" MaxHeight="58"
-                               TextTrimming="CharacterEllipsis" />
-                    <Image x:Name="ClipImage" Margin="0,5,0,0" MaxHeight="96" Stretch="Uniform"
-                           HorizontalAlignment="Left" Visibility="Collapsed"
-                           RenderOptions.BitmapScalingMode="HighQuality" />
-                </StackPanel>
+            <!-- 待发送的图片 -->
+            <WrapPanel x:Name="AttachTray" Margin="0,8,0,0" Visibility="Collapsed" />
+
+            <!-- 正在追问的划线原文 -->
+            <Border x:Name="ReplyCard" Margin="0,8,0,0" CornerRadius="10" Padding="12,7,6,7"
+                    Background="{DynamicResource Quote}" Visibility="Collapsed">
+                <DockPanel>
+                    <Button x:Name="ReplyCancel" DockPanel.Dock="Right" Content="✕" Style="{StaticResource TinyBtn}"
+                            VerticalAlignment="Top" ToolTip="不追问了" />
+                    <StackPanel>
+                        <TextBlock Text="追问划线的内容" FontSize="11.5" FontWeight="SemiBold"
+                                   Foreground="{DynamicResource Accent}" />
+                        <TextBlock x:Name="ReplyText" Margin="0,3,0,0" FontSize="13" TextWrapping="Wrap"
+                                   Foreground="{DynamicResource InkSoft}" MaxHeight="58" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </DockPanel>
             </Border>
 
-            <WrapPanel x:Name="Chips" Margin="0,8,0,0" Visibility="Collapsed" />
+            <!-- 来路：主线 › 1.1 … -->
+            <DockPanel x:Name="Crumb" Margin="0,8,0,0" Visibility="Collapsed">
+                <Button x:Name="BackBtn" DockPanel.Dock="Left" Content="‹ 上一层" Style="{StaticResource TinyBtn}"
+                        Foreground="{DynamicResource Accent}" ToolTip="回到分出这条追问的地方" />
+                <TextBlock x:Name="CrumbText" Margin="6,0,0,0" FontSize="12" VerticalAlignment="Center"
+                           Foreground="{DynamicResource InkSoft}" TextTrimming="CharacterEllipsis" />
+            </DockPanel>
 
-            <!-- 输出：译文 / 对话 -->
-            <ScrollViewer x:Name="OutScroll" Margin="0,8,0,0" MaxHeight="420"
-                          VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled"
-                          Visibility="Collapsed">
-                <Grid>
-                    <StackPanel x:Name="TranslatePanel" />
-                    <StackPanel x:Name="ChatPanel" Visibility="Collapsed" />
-                    <StackPanel x:Name="ClipPanel" Visibility="Collapsed" />
-                </Grid>
-            </ScrollViewer>
+            <!-- 输出：侧栏（问答树 / 历史） + 译文 / 对话 -->
+            <Grid x:Name="OutGrid" Margin="0,8,0,0" Visibility="Collapsed">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <Border x:Name="Side" Grid.Column="0" Width="262" Margin="0,0,10,0" CornerRadius="10"
+                        Background="{DynamicResource Bg}" Visibility="Collapsed">
+                    <DockPanel>
+                        <DockPanel DockPanel.Dock="Top" Margin="6,6,6,2">
+                            <Button x:Name="SideClose" DockPanel.Dock="Right" Content="✕" Style="{StaticResource TinyBtn}"
+                                    ToolTip="收起侧栏" />
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="TabTree" Content="问答树" Style="{StaticResource TabBtn}" />
+                                <Button x:Name="TabHist" Content="历史" Style="{StaticResource TabBtn}" />
+                            </StackPanel>
+                        </DockPanel>
+                        <Grid x:Name="HistSearchBox" DockPanel.Dock="Top" Margin="8,2,8,4" Visibility="Collapsed">
+                            <TextBox x:Name="HistSearch" Padding="6,4" FontSize="12.5" BorderThickness="1"
+                                     BorderBrush="{DynamicResource Line}" Background="{DynamicResource Surface}"
+                                     Foreground="{DynamicResource Ink}" CaretBrush="{DynamicResource Accent}" />
+                            <TextBlock x:Name="HistSearchHint" Text="搜索历史…" Margin="9,0,0,0" FontSize="12.5"
+                                       VerticalAlignment="Center" Foreground="{DynamicResource InkSoft}" IsHitTestVisible="False" />
+                        </Grid>
+                        <TextBlock x:Name="SideHint" DockPanel.Dock="Bottom" Margin="10,4,10,8" FontSize="11.5"
+                                   TextWrapping="Wrap" Foreground="{DynamicResource InkSoft}" />
+                        <ScrollViewer x:Name="SideScroll" VerticalScrollBarVisibility="Auto"
+                                      HorizontalScrollBarVisibility="Disabled">
+                            <StackPanel x:Name="SideList" Margin="4,2,4,4" />
+                        </ScrollViewer>
+                    </DockPanel>
+                </Border>
+
+                <ScrollViewer x:Name="OutScroll" Grid.Column="1" MaxHeight="440"
+                              VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+                    <Grid>
+                        <StackPanel x:Name="TranslatePanel" />
+                        <StackPanel x:Name="ChatPanel" Visibility="Collapsed" Margin="0,0,4,0" />
+                    </Grid>
+                </ScrollViewer>
+            </Grid>
 
             <TextBlock x:Name="Status" Margin="4,6,4,0" FontSize="11.5"
                        Foreground="{DynamicResource InkSoft}" TextTrimming="CharacterEllipsis"

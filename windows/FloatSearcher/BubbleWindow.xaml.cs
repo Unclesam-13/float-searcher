@@ -14,7 +14,7 @@ namespace FloatSearcher
     /// <summary>
     /// 桌面悬浮图标。
     ///  - 鼠标移上去：图标放大、外圈光环扩散，稍停一下展开扇形选项
-    ///  - 扇形三个选项：中→英 / AI 对话 / 剪贴板，点一下切换（会记住）
+    ///  - 扇形两个选项：中→英 / AI 对话，点一下切换（会记住）
     ///  - 单击图标：在旁边横向弹出输入窗
     ///  - 按住拖动：移动；右键：设置、退出
     /// </summary>
@@ -189,21 +189,18 @@ namespace FloatSearcher
         {
             (Mode.Translate, "中 → 英"),
             (Mode.Chat, "AI 对话"),
-            (Mode.Clipboard, "剪贴板"),
         };
 
         public static string Glyph(Mode m) => m switch
         {
             Mode.Translate => "译",
-            Mode.Chat => "AI",
-            _ => "贴",
+            _ => "AI",
         };
 
         public static string ModeName(Mode m) => m switch
         {
             Mode.Translate => "中译英",
-            Mode.Chat => "AI 对话",
-            _ => "剪贴板",
+            _ => "AI 对话",
         };
 
         void BuildFan()
@@ -239,8 +236,7 @@ namespace FloatSearcher
                     ToolTip = mode switch
                     {
                         Mode.Translate => "输入中文，回车出英文",
-                        Mode.Chat => "和 AI 对话，回车发送",
-                        _ => "复制后点图标，自动带上剪贴板内容",
+                        _ => "和 AI 对话：选中回答里的一段可以追问，有历史和问答树；Ctrl+V 粘贴截图",
                     },
                 };
                 var item = new FanItem { Mode = mode, View = view, Text = text, Scale = scale, Move = move };
@@ -300,8 +296,9 @@ namespace FloatSearcher
 
             // 感应区：图标到选项之间的扇形
             double r = FanRadius + 52;
-            double a0 = dir - (SpreadDeg + 34) * Math.PI / 180;
-            double a1 = dir + (SpreadDeg + 34) * Math.PI / 180;
+            double half = (_items.Count - 1) / 2.0 * SpreadDeg + 34;
+            double a0 = dir - half * Math.PI / 180;
+            double a1 = dir + half * Math.PI / 180;
             var fig = new PathFigure { StartPoint = new Point(Half, Half), IsClosed = true };
             fig.Segments.Add(new LineSegment(new Point(Half + r * Math.Cos(a0), Half + r * Math.Sin(a0)), false));
             fig.Segments.Add(new ArcSegment(new Point(Half + r * Math.Cos(a1), Half + r * Math.Sin(a1)),
@@ -316,7 +313,7 @@ namespace FloatSearcher
             {
                 var it = _items[i];
                 StyleItem(it);
-                double ang = dir + (i - 1) * SpreadDeg * Math.PI / 180;
+                double ang = dir + (i - (_items.Count - 1) / 2.0) * SpreadDeg * Math.PI / 180;
                 double cx = Half + FanRadius * Math.Cos(ang);
                 double cy = Half + FanRadius * Math.Sin(ang);
                 Canvas.SetLeft(it.View, cx - it.View.Width / 2);

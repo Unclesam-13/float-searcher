@@ -123,7 +123,7 @@
 
                 <TextBlock Text="划词助手" FontSize="24" FontWeight="Bold" />
                 <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,14"
-                           Text="鼠标移到悬浮图标上会展开三个选项：中→英、AI 对话、剪贴板。选好后单击图标，旁边会横向弹出输入窗。右键图标可以打开这里或退出。" />
+                           Text="鼠标移到悬浮图标上会展开两个选项：中→英、AI 对话。选好后单击图标，旁边会横向弹出输入窗。右键图标可以打开这里或退出。" />
 
                 <!-- 接口 -->
                 <Border Style="{StaticResource Card}">
@@ -148,7 +148,7 @@
                                 <Button x:Name="PickFlash" Content="deepseek-flash · 快又省" Style="{StaticResource Btn}" Margin="0,0,8,0" />
                                 <Button x:Name="PickPro" Content="deepseek-v4-pro · 更强" Style="{StaticResource Btn}" />
                             </StackPanel>
-                            <CheckBox x:Name="WebSearchBox" Content="联网搜索（AI 对话、剪贴板）：需要最新信息时自动搜索，回答附来源" />
+                            <CheckBox x:Name="WebSearchBox" Content="联网搜索（AI 对话）：需要最新信息时自动搜索，回答附来源" />
                             <TextBlock Style="{StaticResource Hint}" Margin="22,2,0,0"
                                        Text="AI 自己判断要不要搜、搜什么，最多搜 3 次。输入窗里的「联网」按钮也能随时开关。联网时不使用深度思考。每次搜索按 DeepSeek 的价格计费（约 0.75 美元 / 1000 次）。" />
                             <CheckBox x:Name="DeepThink" Content="AI 对话时开启深度思考（更准，但要多等一会儿；中译英和联网时总是关闭）" />
@@ -201,33 +201,25 @@
                         <TextBox x:Name="ChatSystem" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="68"
                                  VerticalScrollBarVisibility="Auto" />
                         <TextBlock Style="{StaticResource Hint}"
-                                   Text="回车发送，Shift+回车换行。对话会一直保留，点输入窗里的「新对话」或右键图标清空。" />
-                    </StackPanel>
-                </Border>
-
-                <!-- 剪贴板 -->
-                <Border Style="{StaticResource Card}">
-                    <StackPanel>
-                        <TextBlock Style="{StaticResource H}" Text="剪贴板" />
-                        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,4"
-                                   Text="复制一段文字或一张图片（截图、网页图片、资源管理器里的图片文件）后单击悬浮图标，内容会自动放进对话。剪贴板里同时有文字和图片时用文字。粘贴之后：" />
-                        <RadioButton x:Name="ClipAuto" GroupName="clip"
-                                     Content="自动用下面的提示词发送（最快）" />
-                        <TextBlock Style="{StaticResource Hint}" Margin="22,6,0,0" Text="复制的是文字时用：" />
-                        <TextBox x:Name="ClipPrompt" Margin="22,4,0,0" AcceptsReturn="True" TextWrapping="Wrap"
-                                 MinHeight="44" />
-                        <TextBlock Style="{StaticResource Hint}" Margin="22,8,0,0" Text="复制的是图片时用：" />
-                        <TextBox x:Name="ClipImagePromptBox" Margin="22,4,0,0" AcceptsReturn="True" TextWrapping="Wrap"
-                                 MinHeight="44" />
-                        <TextBlock Style="{StaticResource Hint}" Margin="22,4,0,0"
-                                   Text="图片提问需要能看图的模型：Claude，或 DeepSeek 的 deepseek-flash（选了别的 DeepSeek 模型时，带图的提问会自动改用 flash）。" />
-                        <RadioButton x:Name="ClipAsk" GroupName="clip" Margin="0,10,0,0"
-                                     Content="先不发送，等我输入提示词再按回车" />
+                                   Text="回车发送，Shift+回车换行。Ctrl+V 可以粘贴截图 / 图片（也可以把图片文件拖进来，或点 📎），看图需要能看图的模型：Claude，或 DeepSeek 的 deepseek-flash（带图时自动改用它）。" />
 
                         <TextBlock Style="{StaticResource Label}"
-                                   Text="快捷提示词（输入窗里显示成按钮，点一下就对剪贴板内容提问）。每行一个：名称 | 要 AI 做什么" />
-                        <TextBox x:Name="ClipPresets" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="110"
+                                   Text="划线追问：在 AI 的回答里选中一段看不懂的文字，会弹出「追问」小窗。追问在单独的分支里展开，主回答原样保留，被划的句子变成黄色高亮，点它就能跳过去。所有问答自动排成「问答树」（1、1.1、1.1.1…），输入窗里的「问答树」「历史」按钮随时查看、跳转。" />
+                        <TextBlock Style="{StaticResource Label}" Text="划线追问的预设问题（每行一个，追问小窗里点一下就发）" />
+                        <TextBox x:Name="MindPresets" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="84"
                                  VerticalScrollBarVisibility="Auto" />
+                        <TextBlock Style="{StaticResource Label}" Text="划线后不输入问题、直接回车时问的是" />
+                        <TextBox x:Name="MindDefault" />
+
+                        <TextBlock Style="{StaticResource Label}" Text="对话历史保存在" />
+                        <DockPanel>
+                            <Button x:Name="MindFolderDefault" DockPanel.Dock="Right" Content="默认位置" Style="{StaticResource Btn}" Margin="6,0,0,0" />
+                            <Button x:Name="MindFolderPick" DockPanel.Dock="Right" Content="选择文件夹…" Style="{StaticResource Btn}" Margin="6,0,0,0" />
+                            <Button x:Name="MindFolderOpen" DockPanel.Dock="Right" Content="打开" Style="{StaticResource Btn}" Margin="6,0,0,0" />
+                            <TextBox x:Name="MindFolder" VerticalContentAlignment="Center" />
+                        </DockPanel>
+                        <TextBlock Style="{StaticResource Hint}"
+                                   Text="留空就是默认位置（%APPDATA%\FloatSearcher\对话数据）。用 Obsidian 的 Canvas Mindflow 插件的话，可以选「你的库\Mindflow\对话数据」，两边共用同一份历史和问答树；粘贴的图片存在它旁边的「附件」文件夹。" />
                     </StackPanel>
                 </Border>
 

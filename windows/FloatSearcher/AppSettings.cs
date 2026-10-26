@@ -7,11 +7,8 @@ using Microsoft.Win32;
 
 namespace FloatSearcher
 {
-    /// <summary>三种模式：点悬浮图标时打开哪一种</summary>
-    public enum Mode { Translate, Chat, Clipboard }
-
-    /// <summary>剪贴板模式：粘贴后自动发送，还是等用户再输入提示词</summary>
-    public enum ClipAction { AutoSend, AskFirst }
+    /// <summary>两种模式：点悬浮图标时打开哪一种</summary>
+    public enum Mode { Translate, Chat }
 
     /// <summary>所有设置，保存在 %APPDATA%\FloatSearcher\settings.json</summary>
     public class AppSettings
@@ -43,18 +40,13 @@ namespace FloatSearcher
         public string ChatSystem { get; set; } =
             "你是桌面悬浮助手。回答简洁清晰，先给结论再解释；需要时用短列表，少用标题和表格。默认用简体中文回答。";
 
-        // ---- 剪贴板 ----
-        public ClipAction ClipAction { get; set; } = ClipAction.AutoSend;
-        public string ClipPrompt { get; set; } = "请解释这段内容。如果是外文，先翻译成中文再解释。";
-        public string ClipImagePrompt { get; set; } = "请说明这张图片的内容。如果图里有文字，先把文字提取出来；如果是外文，再翻译成中文。";
-        /// <summary>剪贴板模式下的快捷提示词，每行「名称 | 指令」</summary>
-        public string ClipPresets { get; set; } =
-            "解释 | 用通俗的话解释这段内容。\n" +
-            "翻译成中文 | 把这段内容翻译成自然流畅的中文，只给译文。\n" +
-            "翻译成英文 | 把这段内容翻译成地道的英文，只给译文。\n" +
-            "总结 | 用三句话以内总结要点。\n" +
-            "润色 | 在不改变原意的前提下润色这段文字，直接给出改好的版本。\n" +
-            "怎么回复 | 这是别人发给我的消息，帮我写两三个得体的回复。";
+        /// <summary>划线追问的预设问题，每行一个</summary>
+        public string MindPresets { get; set; } =
+            "请详细解释这段内容。\n能举一个具体的例子吗？\n用通俗易懂的话再讲一遍。\n这和前面的内容有什么联系？";
+        /// <summary>划线后直接回车追问时用的问题</summary>
+        public string MindDefaultFollowUp { get; set; } = "请详细解释这段内容。";
+        /// <summary>对话历史保存位置；空 = %APPDATA%\FloatSearcher\对话数据</summary>
+        public string MindFolder { get; set; } = "";
 
         // ---- 悬浮图标 ----
         public double BubbleX { get; set; } = double.NaN;
@@ -81,7 +73,12 @@ namespace FloatSearcher
                 if (File.Exists(FilePath))
                 {
                     var s = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), Json);
-                    if (s != null) return s;
+                    if (s != null)
+                    {
+                        // 旧版本的「剪贴板」模式已经去掉了：改成 AI 对话
+                        if (s.Mode != Mode.Translate && s.Mode != Mode.Chat) s.Mode = Mode.Chat;
+                        return s;
+                    }
                 }
             }
             catch { }
@@ -117,21 +114,13 @@ namespace FloatSearcher
             return list;
         }
 
-        public List<KeyValuePair<string, string>> ClipPresetList()
+        public List<string> MindPresetList()
         {
-            var list = new List<KeyValuePair<string, string>>();
-            foreach (var raw in (ClipPresets ?? "").Split('\n'))
+            var list = new List<string>();
+            foreach (var raw in (MindPresets ?? "").Split('\n'))
             {
-                var line = raw.Trim();
-                if (line.Length == 0) continue;
-                int i = line.IndexOfAny(new[] { '|', '｜' });
-                if (i > 0)
-                {
-                    var name = line.Substring(0, i).Trim();
-                    var prompt = line.Substring(i + 1).Trim();
-                    if (name.Length > 0 && prompt.Length > 0) list.Add(new KeyValuePair<string, string>(name, prompt));
-                }
-                else list.Add(new KeyValuePair<string, string>(line.Length > 6 ? line.Substring(0, 6) + "…" : line, line));
+                var t = raw.Trim();
+                if (t.Length > 0) list.Add(t);
             }
             return list;
         }

@@ -17,7 +17,8 @@ namespace FloatSearcher
         public string Role { get; set; }
         public string Content { get; set; }
         /// <summary>可选的图片（JPEG，base64），只放在用户消息里</summary>
-        public string Image { get; set; }
+        public List<string> Images { get; set; }
+        public bool HasImages => Images != null && Images.Count > 0;
         public ChatMsg(string role, string content) { Role = role; Content = content; }
     }
 
@@ -84,7 +85,7 @@ namespace FloatSearcher
             var key = (s.ApiKey ?? "").Trim();
             var model = s.EffectiveModel;
             bool hasImage = false;
-            foreach (var m in history) if (m.Image != null) { hasImage = true; break; }
+            foreach (var m in history) if (m.HasImages) { hasImage = true; break; }
             // DeepSeek 只有 deepseek-flash 能看图：带图片时自动用它
             if (hasImage && s.Provider == Providers.DeepSeek) model = "deepseek-flash";
             var baseUrl = s.EffectiveBaseUrl.TrimEnd('/');
@@ -427,34 +428,33 @@ namespace FloatSearcher
 
         // ================= 带图片的消息 =================
 
-        /// <summary>OpenAI 兼容格式：有图片时是「文字 + 图片」数组</summary>
+        /// <summary>OpenAI 兼容格式：有图片时是「文字 + 图片…」数组</summary>
         static JsonNode OpenAiContent(ChatMsg m)
         {
-            if (m.Image == null) return JsonValue.Create(m.Content);
-            return new JsonArray
-            {
-                new JsonObject { ["type"] = "text", ["text"] = m.Content },
-                new JsonObject
+            if (!m.HasImages) return JsonValue.Create(m.Content);
+            var arr = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = m.Content } };
+            foreach (var img in m.Images)
+                arr.Add(new JsonObject
                 {
                     ["type"] = "image_url",
-                    ["image_url"] = new JsonObject { ["url"] = "data:image/jpeg;base64," + m.Image },
-                },
-            };
+                    ["image_url"] = new JsonObject { ["url"] = "data:image/jpeg;base64," + img },
+                });
+            return arr;
         }
 
         /// <summary>Claude 格式：图片块在前，文字在后</summary>
         static JsonNode AnthropicContent(ChatMsg m)
         {
-            if (m.Image == null) return JsonValue.Create(m.Content);
-            return new JsonArray
-            {
-                new JsonObject
+            if (!m.HasImages) return JsonValue.Create(m.Content);
+            var arr = new JsonArray();
+            foreach (var img in m.Images)
+                arr.Add(new JsonObject
                 {
                     ["type"] = "image",
-                    ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = "image/jpeg", ["data"] = m.Image },
-                },
-                new JsonObject { ["type"] = "text", ["text"] = m.Content },
-            };
+                    ["source"] = new JsonObject { ["type"] = "base64", ["media_type"] = "image/jpeg", ["data"] = img },
+                });
+            arr.Add(new JsonObject { ["type"] = "text", ["text"] = m.Content });
+            return arr;
         }
 
         // ================= Claude =================

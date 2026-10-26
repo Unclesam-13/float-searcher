@@ -45,6 +45,7 @@ namespace FloatSearcher
         protected override void OnExit(ExitEventArgs e)
         {
             Settings?.Save();
+            try { MindStore.Shared.Flush(); } catch { }
             try { _single?.ReleaseMutex(); } catch { }
             base.OnExit(e);
         }
@@ -94,6 +95,7 @@ namespace FloatSearcher
                 Set("Quote", "#1F2924"); Set("Ink", "#E5ECE8"); Set("InkSoft", "#98A8A0");
                 Set("Line", "#2F3934"); Set("Accent", "#5FCFAF"); Set("AccentInk", "#0A1914");
                 Set("AccentSoft", "#335FCFAF"); Set("Danger", "#F08A7E"); Set("Hover", "#2A332F");
+                Set("Mark", "#66B8962E"); Set("MarkStrong", "#99D4AF3A");
             }
             else
             {
@@ -101,6 +103,7 @@ namespace FloatSearcher
                 Set("Quote", "#EDF3EF"); Set("Ink", "#17201C"); Set("InkSoft", "#5B6A63");
                 Set("Line", "#D5DDD8"); Set("Accent", "#1E7A62"); Set("AccentInk", "#FFFFFF");
                 Set("AccentSoft", "#331E7A62"); Set("Danger", "#B23A2E"); Set("Hover", "#E1E8E3");
+                Set("Mark", "#FFF6E3A1"); Set("MarkStrong", "#FFF0D060");
             }
         }
 

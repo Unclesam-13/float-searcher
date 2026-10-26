@@ -23,6 +23,25 @@ namespace FloatSearcher
             OpacitySlider.ValueChanged += (s, e) => OpacityText.Text = $"{OpacitySlider.Value * 100:0}%";
             SaveBtn.Click += (s, e) => { SaveAll(); SavedHint.Text = "已保存 · " + DateTime.Now.ToString("HH:mm:ss"); };
             CancelBtn.Click += (s, e) => Close();
+            MindFolderDefault.Click += (s, e) => MindFolder.Text = "";
+            MindFolderPick.Click += (s, e) =>
+            {
+                var dlg = new Microsoft.Win32.OpenFolderDialog { Title = "选择保存对话历史的文件夹" };
+                var cur = MindFolder.Text.Trim();
+                if (cur.Length > 0 && System.IO.Directory.Exists(cur)) dlg.InitialDirectory = cur;
+                if (dlg.ShowDialog(this) == true) MindFolder.Text = dlg.FolderName;
+            };
+            MindFolderOpen.Click += (s, e) =>
+            {
+                var f = MindFolder.Text.Trim();
+                f = f.Length > 0 ? Environment.ExpandEnvironmentVariables(f) : MindStore.DefaultFolder;
+                try
+                {
+                    System.IO.Directory.CreateDirectory(f);
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(f) { UseShellExecute = true });
+                }
+                catch { }
+            };
             Closed += (s, e) => _test.Cancel();
         }
 
@@ -54,11 +73,9 @@ namespace FloatSearcher
 
             ChatSystem.Text = s.ChatSystem;
 
-            ClipAuto.IsChecked = s.ClipAction == ClipAction.AutoSend;
-            ClipAsk.IsChecked = s.ClipAction == ClipAction.AskFirst;
-            ClipPrompt.Text = s.ClipPrompt;
-            ClipImagePromptBox.Text = s.ClipImagePrompt;
-            ClipPresets.Text = s.ClipPresets;
+            MindPresets.Text = s.MindPresets;
+            MindDefault.Text = s.MindDefaultFollowUp;
+            MindFolder.Text = s.MindFolder;
 
             AutoStart.IsChecked = AppSettings.AutoStart;
             OpacitySlider.Value = s.BubbleOpacity;
@@ -116,10 +133,14 @@ namespace FloatSearcher
 
             if (!string.IsNullOrWhiteSpace(ChatSystem.Text)) s.ChatSystem = ChatSystem.Text.Replace("\r", "").Trim();
 
-            s.ClipAction = ClipAsk.IsChecked == true ? ClipAction.AskFirst : ClipAction.AutoSend;
-            if (!string.IsNullOrWhiteSpace(ClipPrompt.Text)) s.ClipPrompt = ClipPrompt.Text.Replace("\r", "").Trim();
-            if (!string.IsNullOrWhiteSpace(ClipImagePromptBox.Text)) s.ClipImagePrompt = ClipImagePromptBox.Text.Replace("\r", "").Trim();
-            s.ClipPresets = ClipPresets.Text.Replace("\r", "");
+            s.MindPresets = MindPresets.Text.Replace("\r", "");
+            if (!string.IsNullOrWhiteSpace(MindDefault.Text)) s.MindDefaultFollowUp = MindDefault.Text.Trim();
+            var folder = MindFolder.Text.Trim();
+            if (folder != (s.MindFolder ?? "").Trim())
+            {
+                s.MindFolder = folder;
+                InputBar.OnMindFolderChanged();
+            }
 
             AppSettings.AutoStart = AutoStart.IsChecked == true;
             s.BubbleOpacity = Math.Round(OpacitySlider.Value, 2);

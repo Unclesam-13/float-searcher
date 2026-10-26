@@ -28,13 +28,7 @@ namespace FloatSearcher
         [DllImport("user32.dll")] static extern bool GetMonitorInfo(IntPtr hMon, ref MONITORINFO mi);
         [DllImport("user32.dll")] static extern bool GetCursorPos(out POINT pt);
         [DllImport("user32.dll")] static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-        [DllImport("user32.dll")] static extern uint GetClipboardSequenceNumber();
 
-        /// <summary>剪贴板每变一次这个数就加一：用来判断图片是不是新复制的</summary>
-        public static uint ClipboardSeq()
-        {
-            try { return GetClipboardSequenceNumber(); } catch { return 0; }
-        }
         [DllImport("user32.dll")] static extern int SetWindowLong(IntPtr hWnd, int nIndex, int value);
 
         [DllImport("user32.dll")]
