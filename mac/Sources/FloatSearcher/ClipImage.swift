@@ -1,7 +1,7 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// 从剪贴板读图片，压缩成发给 AI 的 JPEG
+/// 读剪贴板 / 文件里的图片，压缩成发给 AI 的 JPEG
 enum ClipImage {
     /// 截图、网页里「拷贝图像」、或者在访达里拷贝的图片文件
     static func read(_ pb: NSPasteboard) -> NSImage? {
@@ -22,8 +22,19 @@ enum ClipImage {
         return nil
     }
 
+    /// 压缩好的 JPEG 数据
+    static func jpeg(_ img: NSImage) -> Data? {
+        guard let r = encode(img) else { return nil }
+        return r.data
+    }
+
     /// 最长边不超过 1568 像素，透明处垫白底，JPEG 质量 0.85
     static func jpegBase64(_ img: NSImage, maxSide: CGFloat = 1568) -> (base64: String, width: Int, height: Int)? {
+        guard let r = encode(img, maxSide: maxSide) else { return nil }
+        return (r.data.base64EncodedString(), r.width, r.height)
+    }
+
+    private static func encode(_ img: NSImage, maxSide: CGFloat = 1568) -> (data: Data, width: Int, height: Int)? {
         var rect = CGRect(origin: .zero, size: img.size)
         guard let cg = img.cgImage(forProposedRect: &rect, context: nil, hints: nil) else { return nil }
         let w = CGFloat(cg.width), h = CGFloat(cg.height)
@@ -43,6 +54,6 @@ enum ClipImage {
 
         let rep = NSBitmapImageRep(cgImage: out)
         guard let data = rep.representation(using: .jpeg, properties: [.compressionFactor: 0.85]) else { return nil }
-        return (data.base64EncodedString(), cg.width, cg.height)
+        return (data, cg.width, cg.height)
     }
 }

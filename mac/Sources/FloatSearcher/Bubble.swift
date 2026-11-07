@@ -4,7 +4,14 @@ import AppKit
 final class FloatPanel: NSPanel {
     var allowKey = false
     var onCancel: (() -> Void)?
+    /// 快捷键（比如 ⌘V 粘贴图片）；返回 true 表示已经处理了
+    var onKeyEquivalent: ((NSEvent) -> Bool)?
     override var canBecomeKey: Bool { allowKey }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if let f = onKeyEquivalent, f(event) { return true }
+        return super.performKeyEquivalent(with: event)
+    }
     override var canBecomeMain: Bool { false }
 
     /// Esc
@@ -213,7 +220,7 @@ final class BubbleController {
             var diff = atan2(dy, dx) - fanDir
             while diff > .pi { diff -= 2 * .pi }
             while diff < -.pi { diff += 2 * .pi }
-            inside = abs(diff) <= (BubbleController.spreadDeg + 34) * .pi / 180
+            inside = abs(diff) <= (CGFloat(Mode.allCases.count - 1) / 2 * BubbleController.spreadDeg + 34) * .pi / 180
         }
         if !inside { inside = fan.pillScreenRects().contains { $0.insetBy(dx: -6, dy: -6).contains(m) } }
         if inside { lastInside = Date() }
@@ -597,7 +604,7 @@ final class FanView: NSView {
         hovered = nil
         refreshStyles()
         for (i, p) in pills.enumerated() {
-            let ang = direction + CGFloat(i - 1) * BubbleController.spreadDeg * .pi / 180
+            let ang = direction + (CGFloat(i) - CGFloat(Mode.allCases.count - 1) / 2) * BubbleController.spreadDeg * .pi / 180
             let target = CGPoint(x: c.x + BubbleController.fanRadius * cos(ang),
                                  y: c.y + BubbleController.fanRadius * sin(ang))
             p.frame = CGRect(x: target.x - FanView.pillW / 2, y: target.y - FanView.pillH / 2,

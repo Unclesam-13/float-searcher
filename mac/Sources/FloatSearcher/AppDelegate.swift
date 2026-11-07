@@ -65,6 +65,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 
+    func applicationWillTerminate(_ notification: Notification) {
+        // 还在写的回答把已写出的部分存下来
+        BarController.shared.shutdown()
+    }
+
     func refreshStatusItem() {
         guard let button = statusItem?.button else { return }
         let img = NSImage(systemSymbolName: "character.bubble", accessibilityDescription: "划词助手")

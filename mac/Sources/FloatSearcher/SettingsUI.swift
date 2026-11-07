@@ -41,7 +41,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
-                Text("鼠标移到悬浮图标上会展开三个选项：中→英、AI 对话、剪贴板。选好后单击图标，旁边会横向弹出输入窗。右键图标或点菜单栏里的图标，可以打开这里或退出。")
+                Text("鼠标移到悬浮图标上会展开两个选项：中→英、AI 对话。选好后单击图标，旁边会横向弹出输入窗。右键图标或点菜单栏里的图标，可以打开这里或退出。")
                     .font(.callout)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -64,7 +64,7 @@ struct SettingsView: View {
                         Button("deepseek-flash · 快又省") { s.model = "deepseek-flash" }
                         Button("deepseek-v4-pro · 更强") { s.model = "deepseek-v4-pro" }
                     }
-                    Toggle("联网搜索（AI 对话、剪贴板）：需要最新信息时自动搜索，回答附来源", isOn: $s.webSearch)
+                    Toggle("联网搜索（AI 对话）：需要最新信息时自动搜索，回答附来源", isOn: $s.webSearch)
                     Text("AI 自己判断要不要搜、搜什么，最多搜 3 次。输入窗里的「联网」按钮也能随时开关。联网时不使用深度思考。每次搜索按 DeepSeek 的价格计费（约 0.75 美元 / 1000 次）。")
                         .font(.caption).foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
@@ -119,46 +119,34 @@ struct SettingsView: View {
                         .font(.body)
                         .frame(minHeight: 60)
                 }
-                Text("回车发送，⌥+回车换行。对话会一直保留，点输入窗里的「新对话」或菜单里的「开始新的 AI 对话」清空。")
+                Text("回车发送，⌥+回车换行。⌘V 可以粘贴截图 / 图片（也可以把图片拖进来，或点 📎）。看图需要能看图的模型：Claude，或 DeepSeek 的 deepseek-flash（带图时自动改用它）。")
                     .font(.caption).foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
-            }
-
-            Section("剪贴板") {
-                Text("复制一段文字或一张图片（截图、网页图片、访达里的图片文件）后单击悬浮图标，内容会自动放进对话。剪贴板里同时有文字和图片时用文字。粘贴之后：")
-                    .font(.caption).foregroundColor(.secondary)
-                Picker("", selection: $s.clipAction) {
-                    Text("自动用下面的提示词发送（最快）").tag(ClipAction.autoSend)
-                    Text("先不发送，等我输入提示词再按回车").tag(ClipAction.askFirst)
-                }
-                .pickerStyle(.radioGroup)
-                .labelsHidden()
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("复制的是文字时，自动发送用的提示词").font(.caption).foregroundColor(.secondary)
-                    TextEditor(text: $s.clipPrompt)
-                        .font(.body)
-                        .frame(minHeight: 40)
-                }
-                .disabled(s.clipAction != .autoSend)
-                .opacity(s.clipAction == .autoSend ? 1 : 0.5)
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("复制的是图片时，自动发送用的提示词").font(.caption).foregroundColor(.secondary)
-                    TextEditor(text: $s.clipImagePrompt)
-                        .font(.body)
-                        .frame(minHeight: 40)
-                }
-                .disabled(s.clipAction != .autoSend)
-                .opacity(s.clipAction == .autoSend ? 1 : 0.5)
-                Text("图片提问需要能看图的模型：Claude，或 DeepSeek 的 deepseek-flash（选了别的 DeepSeek 模型时，带图的提问会自动改用 flash）。")
+                Text("划线追问：在 AI 的回答里选中一段看不懂的文字，会弹出「追问」小窗。追问在单独的分支里展开，主回答原样保留，被划的句子变成黄色高亮，点它就能跳过去。所有问答自动排成「问答树」（1、1.1、1.1.1…），输入窗里的「问答树」「历史」按钮随时查看、跳转。")
                     .font(.caption).foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text("快捷提示词（输入窗里显示成按钮，点一下就对剪贴板内容提问）。每行一个：名称 | 要 AI 做什么")
+                    Text("划线追问的预设问题（每行一个，追问小窗里点一下就发）").font(.caption).foregroundColor(.secondary)
+                    TextEditor(text: $s.mindPresets)
+                        .font(.body)
+                        .frame(minHeight: 84)
+                }
+                TextField("划线后直接回车时问的是", text: $s.mindDefaultFollowUp)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("对话历史保存在").font(.caption).foregroundColor(.secondary)
+                    HStack {
+                        TextField("", text: $s.mindFolder, prompt: Text(MindStore.defaultFolder.path))
+                        Button("选择…") { pickMindFolder() }
+                        Button("默认") { s.mindFolder = "" }
+                        Button("打开") {
+                            let f = MindStore.shared.folder
+                            try? FileManager.default.createDirectory(at: f, withIntermediateDirectories: true)
+                            NSWorkspace.shared.open(f)
+                        }
+                    }
+                    Text("留空就是默认位置。用 Obsidian 的 Canvas Mindflow 插件（或 Windows 版）的话，可以选「你的库/Mindflow/对话数据」，几边共用同一份历史和问答树；粘贴的图片存在它旁边的「附件」文件夹。")
                         .font(.caption).foregroundColor(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
-                    TextEditor(text: $s.clipPresets)
-                        .font(.body)
-                        .frame(minHeight: 110)
                 }
             }
 
@@ -191,6 +179,16 @@ struct SettingsView: View {
         case .anthropic: return "Anthropic 官方 Claude 接口。Key 在 console.anthropic.com 获取。"
         case .openai: return "OpenAI 或兼容它的服务（通义千问、Kimi、智谱等）。地址填到 /v1 这一级，模型名照服务商给的填。"
         }
+    }
+
+    private func pickMindFolder() {
+        let p = NSOpenPanel()
+        p.canChooseDirectories = true
+        p.canChooseFiles = false
+        p.canCreateDirectories = true
+        p.prompt = "选择"
+        p.message = "选择保存对话历史的文件夹"
+        if p.runModal() == .OK, let u = p.url { s.mindFolder = u.path }
     }
 
     private func test() {

@@ -21,6 +21,12 @@ enum Theme {
     static let accentInk = dynamic(0xFFFFFF, 0x0A1914)
     static let hover = dynamic(0xE1E8E3, 0x2A332F)
     static let danger = dynamic(0xB23A2E, 0xF08A7E)
+    /// 划线追问过的句子
+    static let mark = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+        return isDark ? NSColor(hex: 0xB8962E).withAlphaComponent(0.42) : NSColor(hex: 0xF6E3A1)
+    }
+    static let markStrong = dynamic(0xF0D060, 0xD4AF3A)
     static let accentSoft = NSColor(name: nil) { appearance in
         let isDark = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
         return NSColor(hex: isDark ? 0x5FCFAF : 0x1E7A62).withAlphaComponent(0.18)
@@ -48,4 +54,6 @@ extension Color {
     static let tAccentSoft = Color(nsColor: Theme.accentSoft)
     static let tHover = Color(nsColor: Theme.hover)
     static let tDanger = Color(nsColor: Theme.danger)
+    static let tMark = Color(nsColor: Theme.mark)
+    static let tMarkStrong = Color(nsColor: Theme.markStrong)
 }

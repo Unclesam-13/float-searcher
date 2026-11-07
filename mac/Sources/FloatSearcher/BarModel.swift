@@ -1,15 +1,7 @@
 import AppKit
+import Combine
 import SwiftUI
-
-/// 输入窗里的一条对话气泡
-struct UIMsg: Identifiable {
-    let id = UUID()
-    var user: Bool
-    var text: String
-    var error = false
-    var waiting = false
-    var sources: [SearchHit] = []
-}
+import UniformTypeIdentifiers
 
 /// 在异步任务里累积文字用的小盒子（任务闭包里不能直接改外面的 var）
 final class Box<T> {
@@ -17,111 +9,165 @@ final class Box<T> {
     init(_ v: T) { value = v }
 }
 
-/// 输入窗的全部状态和逻辑：中译英、AI 对话、剪贴板
+/// 待发送的图片
+struct PendingImage: Identifiable {
+    let id = UUID()
+    let thumb: NSImage
+    let jpeg: Data
+}
+
+enum SideTab { case tree, hist }
+
+/// 正在生成的一条回答
+@MainActor
+final class Running {
+    var task: Task<Void, Never>?
+    let s: MindSession
+    let node: MindNode
+    let msg: MindMsg
+    var status: String?
+
+    init(s: MindSession, node: MindNode, msg: MindMsg) { self.s = s; self.node = node; self.msg = msg }
+}
+
+/// 输入窗的全部状态和逻辑。两种模式：
+///  - 中译英：回车直接出译文
+///  - AI 对话 = Canvas Mindflow 的追问方式：回答里划线追问（分支单独展开、原文高亮）、问答树、历史；
+///    可以粘贴图片。对话按插件的 JSON 格式保存，可以和 Obsidian、Windows 版共用。
 @MainActor
 final class BarModel: ObservableObject {
-    @Published var mode: Mode = .translate
+    @Published var mode: Mode = .translate { didSet { if mode != oldValue { onLayout?() } } }
     @Published var input = ""
     @Published var trLines: [Prompts.Line] = []
-    @Published var chat: [UIMsg] = []
-    @Published var clip: [UIMsg] = []
-    @Published var clipText: String?
-    /// 剪贴板里的图片（没有文字时才用）：缩略图 + 发给 AI 的 JPEG
-    @Published var clipImage: NSImage?
-    @Published var clipImageInfo = ""
-    private var clipImageB64: String?
-    private var clipImageChange = -1   // 读到这张图时剪贴板的 changeCount
-    var hasClip: Bool { clipText != nil || clipImage != nil }
-    @Published var clipExpanded = false
     @Published var status: String?
     @Published var statusError = false
-    /// 每种模式各自的请求：查单词不会打断正在输出的 AI 回答
-    @Published private(set) var busyModes: Set<Mode> = []
+    @Published private(set) var trBusy = false
     @Published var height: CGFloat = 0
     @Published var focusTick = 0
 
+    // ---- AI 对话（追问树） ----
+    @Published private(set) var session: MindSession?
+    @Published private(set) var nodeId: String?
+    @Published private(set) var replyAnchor: MindAnchor?
+    @Published var pending: [PendingImage] = []
+    @Published var sideOpen = false { didSet { if sideOpen != oldValue { onLayout?() } } }
+    @Published var sideTab: SideTab = .tree
+    @Published var histQuery = ""
+    /// 流式输出时刷新界面用（攒一下再刷，不是每个字都重排）
+    @Published private(set) var tick = 0
+    /// 要滚到哪条消息（"bottom" = 最下面）；seq 变了才滚
+    @Published private(set) var scrollReq: (id: String, seq: Int) = ("bottom", 0)
+    /// 有回答在写时自动跟到最下面
+    private(set) var follow = true
+
     var onHide: (() -> Void)?
+    var onLayout: (() -> Void)?
 
-    private var chatHistory: [ChatMsg] = []
-    private var clipHistory: [ChatMsg] = []
-    private var ownCopy: String?
-    private var gens: [Mode: Int] = [:]          // 每次提问 +1；旧请求的收尾不会改动新请求的界面
-    private var tasks: [Mode: Task<Void, Never>] = [:]
+    private let store = MindStore.shared
+    private var running: [String: Running] = [:]
+    private var loaded = false
+    private var refreshQueued = false
+    private var popover: NSPopover?
+    private var selAnchor: MindAnchor?
+    private var imgCache: [String: String] = [:]
+    private var thumbCache: [String: NSImage] = [:]
+    private var bag = Set<AnyCancellable>()
 
-    /// 当前模式是否在等回答
-    var busy: Bool { busyModes.contains(mode) }
-
-    private func gen(_ m: Mode) -> Int { gens[m, default: 0] }
-
-    private func bump(_ m: Mode) -> Int {
-        let g = gen(m) + 1
-        gens[m] = g
-        return g
-    }
-
-    /// 这次请求的界面更新还算不算数（没被新请求取代，且用户正看着这个模式）
-    private func live(_ m: Mode, _ g: Int) -> Bool { gen(m) == g }
-    private func shown(_ m: Mode, _ g: Int) -> Bool { gen(m) == g && mode == m }
+    // ---- 中译英 ----
+    private var trTask: Task<Void, Never>?
+    private var trGen = 0
     private var trCache: [String: String] = [:]
-    private var pendingAutoSend = false
 
     var s: AppSettings { AppSettings.shared }
 
+    static let maxImages = 4
+
+    init() {
+        store.onError = { [weak self] msg in self?.setStatus(msg, error: true) }
+        store.inUse = { [weak self] id in
+            guard let self else { return false }
+            return self.session?.id == id || self.running.values.contains { $0.s.id == id }
+        }
+        // 设置里换了保存位置：从新位置重新载入
+        AppSettings.shared.$mindFolder
+            .dropFirst()
+            .removeDuplicates()
+            .debounce(for: .milliseconds(800), scheduler: DispatchQueue.main)
+            .sink { [weak self] _ in self?.folderChanged() }
+            .store(in: &bag)
+    }
+
+    /// 输入窗宽度：中译英窄一些；AI 对话宽一些，打开侧栏再加宽
+    var width: CGFloat { mode == .chat ? (sideOpen ? 900 : 640) : 560 }
+
+    var node: MindNode? { nodeId.flatMap { session?.nodes[$0] } }
+
+    var currentRunning: Bool {
+        guard let n = node, let ss = session else { return false }
+        return running.values.contains { $0.s === ss && $0.node === n }
+    }
+
+    /// 发送按钮显示成「停止」
+    var busy: Bool { mode == .chat ? currentRunning : trBusy }
+
+    func isRunning(_ m: MindMsg) -> Bool { running[m.id] != nil }
+    func runStatus(_ m: MindMsg) -> String? { running[m.id]?.status }
+    func nodeRunning(_ n: MindNode) -> Bool { running.values.contains { $0.node === n } }
+    func sessionRunning(_ ss: MindSession) -> Bool { running.values.contains { $0.s === ss } }
+
+    private func isCurrent(_ ss: MindSession, _ n: MindNode) -> Bool {
+        mode == .chat && ss === session && n.id == nodeId
+    }
+
     // ================= 打开 / 收起 =================
 
-    /// 打开前准备：换模式、清空中译英、读剪贴板
     func prepare(for m: Mode, wasVisible: Bool) {
         let changed = m != mode || !wasVisible
+        if trBusy && m != mode { stopTranslate() }
         mode = m
         setStatus(nil)
         if m == .translate && changed {
             input = ""
             trLines = []
         }
-        if m == .clipboard { prepareClipboard() }
+        if m == .chat && !loaded {
+            loaded = true
+            if session == nil, let latest = store.list().first {
+                session = latest
+                nodeId = latest.rootId
+                requestScroll("bottom")
+            }
+        }
+        closePopover()
     }
 
-    /// 显示出来之后：剪贴板「自动发送」就立刻问
-    func afterShow() {
-        if mode == .clipboard && pendingAutoSend {
-            pendingAutoSend = false
-            let p = clipImage != nil ? s.clipImagePrompt : s.clipPrompt
-            sendClip(display: p, prompt: p, includeText: true)
-        }
-    }
-
-    /// 快捷提示词按钮；剪贴板是图片时最前面多一个「提取文字」
-    var chipList: [(name: String, prompt: String)] {
-        var list = s.presetList
-        if clipImage != nil {
-            list.insert(("提取文字", "把图片里的文字原样提取出来，保持原有的分段和顺序，不要解释。"), at: 0)
-        }
-        return list
-    }
+    func afterShow() {}
 
     func willHide() {
-        if busyModes.contains(.translate) { stop(.translate) }
+        if trBusy { stopTranslate() }
+        closePopover()
     }
 
     func hide() { onHide?() }
 
+    /// Esc：先关追问小窗、取消追问，再收起窗口。返回 true 表示已经处理了
+    func escape() -> Bool {
+        if let p = popover, p.isShown { p.close(); return true }
+        if mode == .chat && replyAnchor != nil { clearReply(); return true }
+        return false
+    }
+
     var placeholder: String {
-        switch mode {
-        case .translate: return "输入中文，回车翻译成英文"
-        case .chat: return "问点什么，回车发送（⌥+回车换行）"
-        case .clipboard:
-            if !hasClip { return "先复制一段文字或一张图片，再点悬浮图标" }
-            if !clip.isEmpty { return "继续追问，回车发送" }
-            return clipImage != nil ? "对这张图片说点什么，回车发送" : "对这段内容说点什么，回车发送"
-        }
+        if mode == .translate { return "输入中文，回车翻译成英文" }
+        if replyAnchor != nil { return "就划线的内容追问，回车发送（直接回车 = \(Mind.truncate(s.mindDefaultFollowUp, 12))）" }
+        if !pending.isEmpty { return "要问这张图什么？回车发送（直接回车 = 分析图片）" }
+        guard let n = node else { return "问点什么，回车发送 · ⌘V 粘贴截图" }
+        if n.anchor != nil { return "在这条追问里接着问，回车发送" }
+        return "接着问，回车发送 · 选中回答里的文字可以追问"
     }
 
     var hasOutput: Bool {
-        switch mode {
-        case .translate: return !trLines.isEmpty
-        case .chat: return !chat.isEmpty
-        case .clipboard: return !clip.isEmpty
-        }
+        mode == .translate ? !trLines.isEmpty : (sideOpen || !(node?.messages.isEmpty ?? true))
     }
 
     func setStatus(_ t: String?, error: Bool = false) {
@@ -133,56 +179,20 @@ final class BarModel: ObservableObject {
 
     func submit() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        switch mode {
-        case .translate:
+        if mode == .translate {
             if !text.isEmpty { translate(text) }
-        case .chat:
-            guard !text.isEmpty else { return }
-            input = ""
-            converse(isClip: false, display: text, content: text)
-        case .clipboard:
-            guard hasClip else {
-                setStatus("剪贴板里没有文字或图片。先复制，再点悬浮图标。", error: true)
-                return
-            }
-            guard !text.isEmpty else { return }
-            input = ""
-            // 图片已经在第一问里了，追问时不用再带（对话记录里保留着）
-            sendClip(display: text, prompt: text, includeText: clipHistory.isEmpty)
+        } else {
+            mindSubmit(text)
         }
     }
 
-    /// 停止某个模式的请求（默认当前模式）
-    func stop(_ which: Mode? = nil) {
-        let m = which ?? mode
-        _ = bump(m)
-        tasks[m]?.cancel()
-        tasks[m] = nil
-        busyModes.remove(m)
+    func sendButton() {
+        if busy { stopByUser() } else { submit() }
     }
 
     func stopByUser() {
-        stop()
+        if mode == .chat { stopCurrent() } else { stopTranslate() }
         setStatus("已停止")
-    }
-
-    func newConversation() {
-        stop()
-        if mode == .chat {
-            chatHistory.removeAll()
-            chat.removeAll()
-        } else if mode == .clipboard {
-            clipHistory.removeAll()
-            clip.removeAll()
-        }
-        setStatus(nil)
-        focusTick += 1
-    }
-
-    func resetChat() {
-        if busyModes.contains(.chat) { stop(.chat) }
-        chatHistory.removeAll()
-        chat.removeAll()
     }
 
     func toggleWeb() {
@@ -190,45 +200,52 @@ final class BarModel: ObservableObject {
         setStatus(s.webSearch ? "已开启联网：需要时会先搜索，回答附来源" : "已关闭联网")
     }
 
-    // ================= 复制 =================
+    /// 右键菜单「开始新的 AI 对话」
+    func resetChat() { newConversation() }
 
     func copy(_ text: String) {
         guard !text.isEmpty else { return }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.setString(text, forType: .string)
-        ownCopy = text
         let one = text.replacingOccurrences(of: "\n", with: " ")
         setStatus("已复制：" + (one.count > 40 ? String(one.prefix(40)) + "…" : one))
     }
 
     // ================= 中译英 =================
 
+    private func stopTranslate() {
+        trGen += 1
+        trTask?.cancel()
+        trTask = nil
+        trBusy = false
+    }
+
     func translate(_ text: String) {
         let prompt = Prompts.translate(s)
         let key = prompt + "\u{1}" + text
-        stop(.translate)
-        let myGen = bump(.translate)
+        stopTranslate()
+        let myGen = trGen
         if let cached = trCache[key] {
             trLines = Prompts.split(cached)
             doneTranslating()
             return
         }
-        busyModes.insert(.translate)
+        trBusy = true
         setStatus("翻译中…")
         trLines = []
         let acc = Box("")
-        tasks[.translate] = Task { [weak self] in
+        trTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let full = try await AI.stream(AIConfig.current(), system: prompt,
                                                history: [ChatMsg(role: "user", content: text)],
                                                noThinking: true) { piece in
-                    guard self.live(.translate, myGen) else { return }
+                    guard self.trGen == myGen else { return }
                     acc.value += piece
                     self.trLines = Prompts.split(acc.value)
                 }
-                guard self.live(.translate, myGen) else { return }
+                guard self.trGen == myGen else { return }
                 if full.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     if self.mode == .translate { self.setStatus("没有拿到译文，再按一次回车试试", error: true) }
                 } else {
@@ -237,13 +254,13 @@ final class BarModel: ObservableObject {
                     if self.mode == .translate { self.doneTranslating() }
                 }
             } catch is CancellationError {
-                if self.shown(.translate, myGen) { self.setStatus(nil) }
+                if self.trGen == myGen && self.mode == .translate { self.setStatus(nil) }
             } catch {
-                if self.shown(.translate, myGen) { self.setStatus(error.localizedDescription, error: true) }
+                if self.trGen == myGen && self.mode == .translate { self.setStatus(error.localizedDescription, error: true) }
             }
-            if self.live(.translate, myGen) {
-                self.busyModes.remove(.translate)
-                self.tasks[.translate] = nil
+            if self.trGen == myGen {
+                self.trBusy = false
+                self.trTask = nil
             }
         }
     }
@@ -256,175 +273,525 @@ final class BarModel: ObservableObject {
         }
     }
 
-    // ================= 对话（AI 对话、剪贴板共用） =================
+    // ================= AI 对话：提问 =================
 
-    func converse(isClip: Bool, display: String, content: String, image: String? = nil) {
-        let key: Mode = isClip ? .clipboard : .chat
-        stop(key)
-        let myGen = bump(key)
-
-        let userMsg = ChatMsg(role: "user", content: content, image: image)
-        appendHistory(isClip, userMsg)
-        appendUI(isClip, UIMsg(user: true, text: display))
-        let answer = UIMsg(user: false, text: "…", waiting: true)
-        let answerID = answer.id
-        appendUI(isClip, answer)
-
-        busyModes.insert(key)
-        setStatus("思考中…")
-        let history = isClip ? clipHistory : chatHistory
-        let system = s.chatSystem
-        let useWeb = s.webAvailable && s.webSearch
-        let acc = Box("")
-        let sources = Box<[SearchHit]>([])
-
-        let web: WebHooks? = useWeb ? WebHooks(
-            onSearch: { [weak self] q in
-                guard let self else { return }
-                if acc.value.isEmpty { self.updateUI(isClip, answerID) { $0.text = "正在搜索：\(q) …"; $0.waiting = true } }
-                if self.shown(key, myGen) { self.setStatus("正在联网搜索：\(q)") }
-            },
-            onReset: { acc.value = "" },
-            onSources: { sources.value = $0 }
-        ) : nil
-
-        tasks[key] = Task { [weak self] in
+    private func refreshSoon() {
+        if refreshQueued { return }
+        refreshQueued = true
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 90_000_000)
             guard let self else { return }
-            do {
-                let full = try await AI.stream(AIConfig.current(), system: system, history: history, web: web,
-                                               onThinking: { [weak self] n in
-                                                   guard let self, self.shown(key, myGen), acc.value.isEmpty else { return }
-                                                   self.setStatus("深度思考中…（已想 \(n) 字）")
-                                               }) { [weak self] piece in
-                    guard let self else { return }
-                    acc.value += piece
-                    let shown = acc.value
-                    self.updateUI(isClip, answerID) { $0.text = shown; $0.waiting = false }
-                    if self.shown(key, myGen) { self.setStatus("正在回答…") }
-                }
-                if full.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    self.updateUI(isClip, answerID) { $0.text = "（没有收到回答）"; $0.waiting = false }
-                    self.settle(isClip, userMsg, nil)
-                } else {
-                    let found = sources.value
-                    self.updateUI(isClip, answerID) { $0.text = full; $0.waiting = false; $0.sources = found }
-                    self.settle(isClip, userMsg, full)
-                }
-                if self.shown(key, myGen) { self.setStatus(nil) }
-            } catch is CancellationError {
-                let partial = acc.value
-                if partial.isEmpty { self.updateUI(isClip, answerID) { $0.text = "（已停止）"; $0.waiting = false } }
-                self.settle(isClip, userMsg, partial.isEmpty ? nil : partial)
-            } catch {
-                let msg = error.localizedDescription
-                let partial = acc.value
-                if partial.isEmpty {
-                    self.updateUI(isClip, answerID) { $0.text = "⚠ " + msg; $0.error = true; $0.waiting = false }
-                }
-                self.settle(isClip, userMsg, partial.isEmpty ? nil : partial)
-                if self.shown(key, myGen) { self.setStatus(msg, error: true) }
-            }
-            if self.live(key, myGen) {
-                self.busyModes.remove(key)
-                self.tasks[key] = nil
-            }
+            self.refreshQueued = false
+            self.tick += 1
         }
     }
 
-    private func appendHistory(_ isClip: Bool, _ m: ChatMsg) {
-        if isClip {
-            clipHistory.append(m)
-            trim(&clipHistory, keepHead: true)
-        } else {
-            chatHistory.append(m)
-            trim(&chatHistory, keepHead: false)
-        }
+    private func refreshNow() { tick += 1 }
+
+    private func requestScroll(_ id: String) {
+        scrollReq = (id, scrollReq.seq + 1)
     }
 
-    private func appendUI(_ isClip: Bool, _ m: UIMsg) {
-        if isClip { clip.append(m) } else { chat.append(m) }
-    }
-
-    private func updateUI(_ isClip: Bool, _ id: UUID, _ f: (inout UIMsg) -> Void) {
-        if isClip {
-            if let i = clip.firstIndex(where: { $0.id == id }) { f(&clip[i]) }
-        } else {
-            if let i = chat.firstIndex(where: { $0.id == id }) { f(&chat[i]) }
-        }
-    }
-
-    /// 有回答就紧跟在这条提问后面放进记录；没有回答就撤回这条提问（方便重试）。对话已清空时什么也不做。
-    private func settle(_ isClip: Bool, _ userMsg: ChatMsg, _ answer: String?) {
-        func apply(_ h: inout [ChatMsg]) {
-            guard let i = h.firstIndex(where: { $0.id == userMsg.id }) else { return }
-            if let a = answer, !a.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                h.insert(ChatMsg(role: "assistant", content: a), at: i + 1)
-            } else {
-                h.remove(at: i)
-            }
-        }
-        if isClip { apply(&clipHistory) } else { apply(&chatHistory) }
-    }
-
-    /// 只带最近 20 条；开头必须是用户的话。剪贴板对话保留第一问一答（里面有原文）。
-    private func trim(_ h: inout [ChatMsg], keepHead: Bool) {
-        let start = keepHead && h.count > 2 && h[0].role == "user" && h[1].role == "assistant" ? 2 : 0
-        while h.count > 20 && h.count - start > 2 {
-            h.remove(at: start)
-            if h.count - start > 1 && h[start].role != "user" { h.remove(at: start) }
-        }
-        while h.count > 1 && h[0].role != "user" { h.remove(at: 0) }
-    }
-
-    // ================= 剪贴板 =================
-
-    /// 读剪贴板：有文字用文字，没有文字再看有没有图片；内容变了就开始一段新对话
-    func prepareClipboard() {
-        let pb = NSPasteboard.general
-        let text = pb.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines)
-        if let t = text, !t.isEmpty {
-            if t != clipText && t != ownCopy {
-                startClip()
-                clipText = t
-            }
-        } else if pb.changeCount != clipImageChange, let img = ClipImage.read(pb) {
-            clipImageChange = pb.changeCount
-            if let enc = ClipImage.jpegBase64(img) {
-                startClip()
-                clipImage = img
-                clipImageB64 = enc.base64
-                clipImageInfo = "图片 \(enc.width)×\(enc.height)"
-            } else {
-                setStatus("这张图片读不出来，换一张试试", error: true)
-            }
-        }
-        if !hasClip {
-            setStatus("剪贴板里没有文字或图片。先复制一段文字或一张图片，再点悬浮图标。", error: true)
-        }
-    }
-
-    /// 换了新的剪贴板内容：清掉旧对话
-    private func startClip() {
-        if busyModes.contains(.clipboard) { stop(.clipboard) }
-        clipText = nil
-        clipImage = nil
-        clipImageB64 = nil
-        clipImageInfo = ""
-        clipHistory.removeAll()
-        clip.removeAll()
-        clipExpanded = false
-        // 「粘贴后自动发送」：显示出来后立刻用预设提示词发送
-        pendingAutoSend = s.clipAction == .autoSend
-    }
-
-    func sendClip(display: String, prompt: String, includeText: Bool) {
-        if let img = clipImageB64 {
-            // 图片：第一次提问（或点快捷按钮）时把图片带上
-            converse(isClip: true, display: display, content: prompt, image: includeText ? img : nil)
+    private func mindSubmit(_ text: String) {
+        if replyAnchor == nil && text.isEmpty && pending.isEmpty { return }
+        if replyAnchor == nil && currentRunning {
+            setStatus("上一个回答还在写，写完再接着问（点 ■ 可以停止）。想追问上面的内容，选中那段文字就行。")
             return
         }
-        guard let t = clipText else { return }
-        let content = includeText ? prompt + "\n\n内容：\n\"\"\"\n" + t + "\n\"\"\"" : prompt
-        converse(isClip: true, display: display, content: content)
+        input = ""
+        let images = takePending()
+
+        if let a = replyAnchor, session != nil, node != nil {
+            clearReply()
+            branch(a, question: text, images: images)
+            return
+        }
+        clearReply()
+        if text.isEmpty && images == nil { return }
+
+        if session == nil {
+            let ns = Mind.newSession(text.isEmpty ? "图片提问" : text)
+            store.add(ns)
+            session = ns
+            nodeId = ns.rootId
+        }
+        guard let ss = session else { return }
+        if node == nil { nodeId = ss.rootId }
+        guard let n = node else { return }
+        ask(ss, n, text, images)
+    }
+
+    /// 从选中的一段话分出一条追问，并切到它
+    private func branch(_ anchor: MindAnchor, question: String, images: [MindAttachment]?) {
+        guard let ss = session, let parent = node else { return }
+        let q = question.trimmingCharacters(in: .whitespacesAndNewlines)
+        let child = MindNode()
+        child.parentId = parent.id
+        child.anchor = anchor
+        child.title = q.isEmpty ? "「\(Mind.truncate(anchor.text, 18))」是什么意思？" : Mind.truncate(q, 40)
+        ss.nodes[child.id] = child
+        nodeId = child.id
+        ask(ss, child, q.isEmpty ? s.mindDefaultFollowUp : q, images)
+        focusTick += 1
+    }
+
+    private func ask(_ ss: MindSession, _ n: MindNode, _ question: String, _ images: [MindAttachment]?) {
+        var q = question
+        if q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            q = images != nil ? "请分析这张图片。" : s.mindDefaultFollowUp
+        }
+        let um = MindMsg(role: "user", content: q)
+        um.attachments = images
+        n.messages.append(um)
+        if (n.title ?? "").isEmpty { n.title = Mind.truncate(q, 40) }
+        if ss.title.isEmpty && n.id == ss.rootId { ss.title = n.title ?? "" }
+        let am = MindMsg(role: "assistant", content: "")
+        am.createdAt = um.createdAt + 1
+        am.pending = true
+        n.messages.append(am)
+        store.save(ss)
+
+        let msgs = Mind.buildThread(ss, n.id, loadImage: { [weak self] a in self?.loadImageB64(a) })
+        if isCurrent(ss, n) {
+            follow = true
+            requestScroll("bottom")
+        }
+        run(ss, n, am, msgs)
+    }
+
+    /// 流式生成一条回答。可以同时有好几条在生成（比如主回答还在写，就去追问上面的一句）
+    private func run(_ ss: MindSession, _ n: MindNode, _ am: MindMsg, _ msgs: [ChatMsg]) {
+        let r = Running(s: ss, node: n, msg: am)
+        running[am.id] = r
+        am.pending = true
+        refreshNow()
+        if isCurrent(ss, n) { setStatus("思考中…") }
+
+        let acc = Box("")
+        let sources = Box<[SearchHit]>([])
+        let web: WebHooks? = (s.webAvailable && s.webSearch) ? WebHooks(
+            onSearch: { [weak self, weak r] q in
+                guard let self else { return }
+                r?.status = "正在搜索：\(q) …"
+                self.refreshSoon()
+                if self.isCurrent(ss, n) { self.setStatus("正在联网搜索：\(q)") }
+            },
+            onReset: { [weak self] in
+                acc.value = ""
+                am.content = ""
+                self?.refreshSoon()
+            },
+            onSources: { sources.value = $0 }
+        ) : nil
+        var model = s.effectiveModel
+        if msgs.contains(where: { !$0.images.isEmpty }) && s.provider == .deepseek { model = "deepseek-flash" }
+        am.model = model
+        let system = s.chatSystem
+
+        r.task = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let full = try await AI.stream(AIConfig.current(), system: system, history: msgs, web: web,
+                                               onThinking: { [weak self, weak r] count in
+                                                   guard let self, acc.value.isEmpty else { return }
+                                                   r?.status = "深度思考中…（已想 \(count) 字）"
+                                                   self.refreshSoon()
+                                               }) { [weak self, weak r] piece in
+                    guard let self else { return }
+                    acc.value += piece
+                    am.content = acc.value
+                    r?.status = nil
+                    self.refreshSoon()
+                    if self.isCurrent(ss, n) { self.setStatus("正在回答…") }
+                }
+                am.content = full.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "（AI 返回为空）" : full
+                if !sources.value.isEmpty { am.sources = sources.value.map { MindSource($0) } }
+                if self.isCurrent(ss, n) { self.setStatus(nil) }
+            } catch is CancellationError {
+                am.content = acc.value + (acc.value.isEmpty ? "" : "\n\n") + "*（已停止生成）*"
+            } catch {
+                let msg = error.localizedDescription
+                am.content = (acc.value.isEmpty ? "" : acc.value + "\n\n") + "❌ 请求失败：" + msg
+                if self.isCurrent(ss, n) { self.setStatus(msg, error: true) }
+            }
+            self.finish(ss, n, am)
+        }
+    }
+
+    private func finish(_ ss: MindSession, _ n: MindNode, _ am: MindMsg) {
+        running.removeValue(forKey: am.id)
+        am.pending = false
+        am.doneAt = Mind.now()
+        if ss.nodes[n.id] != nil { store.save(ss, immediate: true) }
+        refreshNow()
+    }
+
+    private func stopCurrent() {
+        guard let n = node, let ss = session else { return }
+        for r in running.values where r.s === ss && r.node === n { r.task?.cancel() }
+    }
+
+    /// 退出程序时：还在写的回答把已写出的部分存下来
+    func shutdown() {
+        for r in running.values {
+            r.task?.cancel()
+            r.msg.pending = false
+            r.msg.content += (r.msg.content.isEmpty ? "" : "\n\n") + "*（已停止生成）*"
+            r.msg.doneAt = Mind.now()
+            store.save(r.s, immediate: true)
+        }
+        running.removeAll()
+        store.flush()
+    }
+
+    /// 重新回答：用这条回答之前的对话重新生成
+    func regenerate(_ n: MindNode, _ m: MindMsg) {
+        guard let ss = session, running[m.id] == nil else { return }
+        if !anchors(n, m).isEmpty {
+            let a = NSAlert()
+            a.messageText = "重新回答？"
+            a.informativeText = "这条回答下面有划线追问。重新回答后，原来划线的句子可能对不上，高亮会消失（追问本身还在问答树里）。"
+            a.addButton(withTitle: "重新回答")
+            a.addButton(withTitle: "取消")
+            if a.runModal() != .alertFirstButtonReturn { return }
+        }
+        m.content = ""
+        m.sources = nil
+        m.extra.removeValue(forKey: "editedAt")
+        m.extra.removeValue(forKey: "originalContent")
+        m.createdAt = Mind.now()
+        m.pending = true
+        let msgs = Mind.buildThread(ss, n.id, loadImage: { [weak self] a in self?.loadImageB64(a) }, upto: m.id)
+        run(ss, n, m, msgs)
+    }
+
+    // ================= 划线追问 =================
+
+    /// 回答里选中了一段：弹出追问小窗
+    func selected(_ text: String, in n: MindNode, msg m: MindMsg, view: NSView, rect: NSRect) {
+        guard running[m.id] == nil, n.id == nodeId else { return }
+        let t = MindText.cleanSelection(text)
+        guard !t.isEmpty else { return }
+        selAnchor = MindAnchor(text: t, msgId: m.id)
+        closePopover()
+        let p = NSPopover()
+        p.behavior = .transient
+        p.animates = true
+        let vc = NSHostingController(rootView: SelPopView(m: self, presets: s.mindPresetList))
+        vc.sizingOptions = [.preferredContentSize]
+        p.contentViewController = vc
+        popover = p
+        let r = rect.isEmpty ? NSRect(x: 0, y: 0, width: 10, height: 10) : rect
+        p.show(relativeTo: r, of: view, preferredEdge: .maxY)
+    }
+
+    func closePopover() {
+        popover?.close()
+        popover = nil
+    }
+
+    /// 「追问…」：划线原文挂在输入框上方，在输入框里写问题
+    func startReply() {
+        closePopover()
+        guard let a = selAnchor else { return }
+        replyAnchor = a
+        focusTick += 1
+    }
+
+    /// 点预设问题：直接追问
+    func askPreset(_ q: String) {
+        closePopover()
+        guard let a = selAnchor else { return }
+        clearReply()
+        branch(a, question: q, images: takePending())
+    }
+
+    func copySelection() {
+        closePopover()
+        if let a = selAnchor { copy(a.text) }
+    }
+
+    func clearReply() { replyAnchor = nil }
+
+    /// 这条回答下面挂着的追问（用来画高亮）
+    func anchors(_ n: MindNode, _ m: MindMsg) -> [MindText.Anchor] {
+        guard let ss = session else { return [] }
+        return Mind.children(ss, n.id).compactMap { c in
+            guard let a = c.anchor, a.msgId == m.id, !a.text.isEmpty else { return nil }
+            return MindText.Anchor(text: a.text, childId: c.id, tip: "已追问：\(c.title ?? "")\n点击打开")
+        }
+    }
+
+    // ================= 导航 =================
+
+    func openNode(_ id: String, focus msgId: String? = nil) {
+        guard let ss = session, ss.nodes[id] != nil else { return }
+        nodeId = id
+        clearReply()
+        closePopover()
+        follow = msgId == nil
+        requestScroll(msgId ?? "bottom")
+        setStatus(currentRunning ? "正在回答…" : nil)
+        focusTick += 1
+    }
+
+    func openSession(_ ss: MindSession) {
+        session = ss
+        nodeId = ss.rootId
+        clearReply()
+        closePopover()
+        follow = true
+        requestScroll("bottom")
+        setStatus(nil)
+        focusTick += 1
+    }
+
+    /// 回到分出这条追问的地方，并滚到那条回答
+    func goUp() {
+        guard let n = node, let p = n.parentId else { return }
+        openNode(p, focus: n.anchor?.msgId)
+    }
+
+    /// 开始一段新对话（旧的留在历史里）
+    func newConversation() {
+        session = nil
+        nodeId = nil
+        loaded = true
+        clearReply()
+        closePopover()
+        setStatus(nil)
+        focusTick += 1
+    }
+
+    private func folderChanged() {
+        session = nil
+        nodeId = nil
+        loaded = false
+        clearReply()
+        if mode == .chat {
+            loaded = true
+            if let latest = store.list().first { session = latest; nodeId = latest.rootId }
+        }
+        refreshNow()
+    }
+
+    /// 来路：主线 › 1.1 xxx › 1.1.1 xxx
+    var crumb: String? {
+        guard let n = node, n.parentId != nil, let ss = session else { return nil }
+        let tree = Mind.tree(ss)
+        var parts = ["主线"]
+        for x in Mind.chain(ss, n.id).dropFirst() {
+            let label = tree.first(where: { $0.node === x && $0.firstOfNode })?.label ?? ""
+            parts.append("\(label) \(Mind.truncate(x.title, 16))")
+        }
+        return parts.joined(separator: "  ›  ")
+    }
+
+    // ================= 侧栏 =================
+
+    func toggleSide(_ tab: SideTab?) {
+        if let tab, !(sideOpen && sideTab == tab) {
+            sideTab = tab
+            sideOpen = true
+        } else {
+            sideOpen = false
+        }
+        focusTick += 1
+    }
+
+    var treeItems: [MindTreeItem] { Mind.tree(session) }
+
+    var pathIds: Set<String> { Set(Mind.chain(session, nodeId).map(\.id)) }
+
+    func history() -> (all: Int, shown: [MindSession]) {
+        let all = store.list()
+        let q = histQuery.trimmingCharacters(in: .whitespaces)
+        if q.isEmpty { return (all.count, all) }
+        let shown = all.filter { ss in
+            if ss.title.localizedCaseInsensitiveContains(q) { return true }
+            return ss.nodes.values.contains { $0.messages.contains { $0.content.localizedCaseInsensitiveContains(q) } }
+        }
+        return (all.count, shown)
+    }
+
+    private func confirm(_ title: String, _ text: String, ok: String) -> Bool {
+        let a = NSAlert()
+        a.messageText = title
+        a.informativeText = text
+        a.addButton(withTitle: ok)
+        a.addButton(withTitle: "取消")
+        return a.runModal() == .alertFirstButtonReturn
+    }
+
+    func deleteNode(_ n: MindNode) {
+        guard let ss = session, n.parentId != nil else { return }
+        let ids = Mind.subtree(ss, n.id)
+        let more = ids.count > 1 ? "和它下面的 \(ids.count - 1) 条分支" : ""
+        guard confirm("删除这条追问？", "「\(Mind.truncate(n.title, 30))」\(more)会一起删除。", ok: "删除") else { return }
+        for r in running.values where r.s === ss && ids.contains(r.node.id) { r.task?.cancel() }
+        for id in ids { ss.nodes.removeValue(forKey: id) }
+        if let cur = nodeId, ids.contains(cur) { nodeId = n.parentId }
+        clearReply()
+        closePopover()
+        store.save(ss, immediate: true)
+        refreshNow()
+    }
+
+    func deleteSession(_ ss: MindSession) {
+        guard confirm("删除这段对话？", "「\(Mind.truncate(ss.title, 30))」删除后不能恢复。", ok: "删除") else { return }
+        for r in running.values where r.s === ss { r.task?.cancel() }
+        store.delete(ss.id)
+        if ss === session { session = nil; nodeId = nil; clearReply() }
+        refreshNow()
+    }
+
+    // ================= 图片 =================
+
+    /// ⌘V：剪贴板里是图片（并且没有文字）就当附件。返回 true 表示已经处理了
+    func pasteImage() -> Bool {
+        guard mode == .chat else { return false }
+        let pb = NSPasteboard.general
+        if let t = pb.string(forType: .string), !t.isEmpty { return false }
+        guard let img = ClipImage.read(pb) else { return false }
+        addPending(img)
+        return true
+    }
+
+    func addPending(_ img: NSImage) {
+        if pending.count >= BarModel.maxImages { setStatus("一次最多 \(BarModel.maxImages) 张图片", error: true); return }
+        guard let enc = ClipImage.jpeg(img) else { setStatus("图片读不出来，换一张试试", error: true); return }
+        pending.append(PendingImage(thumb: img, jpeg: enc))
+        setStatus("已添加图片，写上问题回车发送；直接回车 = 分析图片。看图需要能看图的模型。")
+        focusTick += 1
+    }
+
+    func removePending(_ id: UUID) { pending.removeAll { $0.id == id } }
+
+    func pickImages() {
+        let p = NSOpenPanel()
+        p.allowsMultipleSelection = true
+        p.canChooseDirectories = false
+        p.allowedContentTypes = [.image]
+        p.message = "选择要发给 AI 的图片"
+        if #available(macOS 14.0, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
+        if p.runModal() == .OK {
+            for u in p.urls {
+                if let img = NSImage(contentsOf: u) { addPending(img) }
+                else { setStatus("这张图片打不开：\(u.lastPathComponent)", error: true) }
+            }
+        }
+        focusTick += 1
+    }
+
+    /// 拖进来的图片文件 / 图片
+    func drop(_ providers: [NSItemProvider]) -> Bool {
+        guard mode == .chat else { return false }
+        var handled = false
+        for p in providers {
+            if p.canLoadObject(ofClass: URL.self) {
+                handled = true
+                _ = p.loadObject(ofClass: URL.self) { url, _ in
+                    guard let url, let img = NSImage(contentsOf: url) else { return }
+                    Task { @MainActor [weak self] in self?.addPending(img) }
+                }
+            } else if p.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+                handled = true
+                p.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                    guard let data, let img = NSImage(data: data) else { return }
+                    Task { @MainActor [weak self] in self?.addPending(img) }
+                }
+            }
+        }
+        return handled
+    }
+
+    /// 把待发送的图片存进附件文件夹，变成附件记录
+    private func takePending() -> [MindAttachment]? {
+        guard !pending.isEmpty else { return nil }
+        var list: [MindAttachment] = []
+        for p in pending {
+            do {
+                let a = try store.saveImage(p.jpeg)
+                if let u = store.resolve(a) { imgCache[u.path] = p.jpeg.base64EncodedString() }
+                list.append(a)
+            } catch {
+                setStatus("图片保存失败：\(error.localizedDescription)", error: true)
+            }
+        }
+        pending.removeAll()
+        return list.isEmpty ? nil : list
+    }
+
+    /// 附件 → 发给 AI 的 JPEG base64（插件存的 png 等统一转成 JPEG）
+    func loadImageB64(_ a: MindAttachment) -> String? {
+        guard let u = store.resolve(a) else { return nil }
+        if let hit = imgCache[u.path] { return hit }
+        guard let data = try? Data(contentsOf: u) else { return nil }
+        let ext = u.pathExtension.lowercased()
+        var b64: String?
+        if (ext == "jpg" || ext == "jpeg") && data.count < 4_000_000 {
+            b64 = data.base64EncodedString()
+        } else if let img = NSImage(data: data), let j = ClipImage.jpeg(img) {
+            b64 = j.base64EncodedString()
+        }
+        if let b64 { imgCache[u.path] = b64 }
+        return b64
+    }
+
+    /// 聊天里显示的缩略图
+    func thumb(_ a: MindAttachment) -> (NSImage?, URL?) {
+        guard let u = store.resolve(a) else { return (nil, nil) }
+        if let t = thumbCache[u.path] { return (t, u) }
+        guard let img = NSImage(contentsOf: u) else { return (nil, u) }
+        thumbCache[u.path] = img
+        return (img, u)
+    }
+}
+
+/// 选中回答里的文字后弹出的追问小窗
+struct SelPopView: View {
+    let m: BarModel
+    let presets: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Button(action: { m.startReply() }) {
+                    Text("✦ 追问…")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.tAccentInk)
+                        .padding(.horizontal, 12)
+                        .frame(height: 28)
+                        .background(Capsule().fill(Color.tAccent))
+                }
+                .buttonStyle(.plain)
+                .help("就这段话提问（在输入框里写问题）")
+                Button(action: { m.copySelection() }) {
+                    Text("复制")
+                        .font(.system(size: 13))
+                        .foregroundColor(.tInk)
+                        .padding(.horizontal, 12)
+                        .frame(height: 28)
+                        .background(Capsule().fill(Color.tSurface2))
+                }
+                .buttonStyle(.plain)
+            }
+            ForEach(Array(presets.enumerated()), id: \.offset) { _, q in
+                Button(action: { m.askPreset(q) }) {
+                    Text(q)
+                        .font(.system(size: 13))
+                        .foregroundColor(.tInk)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.tSurface2))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(q)
+            }
+        }
+        .padding(10)
+        .frame(width: 280)
     }
 }

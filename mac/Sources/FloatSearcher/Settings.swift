@@ -3,13 +3,12 @@ import ServiceManagement
 
 /// 点悬浮图标时打开哪一种
 enum Mode: String, CaseIterable {
-    case translate, chat, clipboard
+    case translate, chat
 
     var title: String {
         switch self {
         case .translate: return "中 → 英"
         case .chat: return "AI 对话"
-        case .clipboard: return "剪贴板"
         }
     }
 
@@ -18,21 +17,15 @@ enum Mode: String, CaseIterable {
         switch self {
         case .translate: return "译"
         case .chat: return "AI"
-        case .clipboard: return "贴"
         }
     }
 
     var hint: String {
         switch self {
         case .translate: return "输入中文，回车出英文"
-        case .chat: return "和 AI 对话，回车发送"
-        case .clipboard: return "复制后点图标，自动带上剪贴板内容"
+        case .chat: return "和 AI 对话：选中回答里的一段可以追问，有历史和问答树；⌘V 粘贴截图"
         }
     }
-}
-
-enum ClipAction: String {
-    case autoSend, askFirst
 }
 
 enum Provider: String, CaseIterable {
@@ -92,27 +85,26 @@ final class AppSettings: ObservableObject {
     // ---- AI 对话 ----
     @Published var chatSystem: String { didSet { d.set(chatSystem, forKey: "chatSystem") } }
 
-    // ---- 剪贴板 ----
-    @Published var clipAction: ClipAction { didSet { d.set(clipAction.rawValue, forKey: "clipAction") } }
-    @Published var clipPrompt: String { didSet { d.set(clipPrompt, forKey: "clipPrompt") } }
-    @Published var clipPresets: String { didSet { d.set(clipPresets, forKey: "clipPresets") } }
-    @Published var clipImagePrompt: String { didSet { d.set(clipImagePrompt, forKey: "clipImagePrompt") } }
+    // ---- 划线追问 / 历史 ----
+    /// 划线追问的预设问题，每行一个
+    @Published var mindPresets: String { didSet { d.set(mindPresets, forKey: "mindPresets") } }
+    /// 划线后直接回车追问时用的问题
+    @Published var mindDefaultFollowUp: String { didSet { d.set(mindDefaultFollowUp, forKey: "mindDefaultFollowUp") } }
+    /// 对话历史保存位置；空 = ~/Library/Application Support/FloatSearcher/对话数据
+    @Published var mindFolder: String { didSet { d.set(mindFolder, forKey: "mindFolder") } }
 
     // ---- 悬浮图标 ----
     @Published var bubbleOpacity: Double { didSet { d.set(bubbleOpacity, forKey: "bubbleOpacity") } }
 
     static let defaultChatSystem =
         "你是电脑桌面上的悬浮助手。回答简洁清晰，先给结论再解释；需要时用短列表，少用标题和表格。默认用简体中文回答。"
-    static let defaultClipPrompt = "请解释这段内容。如果是外文，先翻译成中文再解释。"
-    static let defaultClipImagePrompt = "请说明这张图片的内容。如果图里有文字，先把文字提取出来；如果是外文，再翻译成中文。"
-    static let defaultClipPresets = """
-        解释 | 用通俗的话解释这段内容。
-        翻译成中文 | 把这段内容翻译成自然流畅的中文，只给译文。
-        翻译成英文 | 把这段内容翻译成地道的英文，只给译文。
-        总结 | 用三句话以内总结要点。
-        润色 | 在不改变原意的前提下润色这段文字，直接给出改好的版本。
-        怎么回复 | 这是别人发给我的消息，帮我写两三个得体的回复。
+    static let defaultMindPresets = """
+        请详细解释这段内容。
+        能举一个具体的例子吗？
+        用通俗易懂的话再讲一遍。
+        这和前面的内容有什么联系？
         """
+    static let defaultMindFollowUp = "请详细解释这段内容。"
 
     private init() {
         // 初始化时不能用 self，先用局部变量读
@@ -126,7 +118,9 @@ final class AppSettings: ObservableObject {
         model = str("model", "")
         deepThink = bool("deepThink", false)
         webSearch = bool("webSearch", true)
-        mode = Mode(rawValue: ud.string(forKey: "mode") ?? "") ?? .translate
+        // 旧版本的「剪贴板」模式已经去掉了：改成 AI 对话
+        let savedMode = ud.string(forKey: "mode") ?? ""
+        mode = Mode(rawValue: savedMode) ?? (savedMode == "clipboard" ? .chat : .translate)
 
         trSynonyms = bool("trSynonyms", true)
         trSynonymCount = ud.object(forKey: "trSynonymCount") == nil ? 3 : ud.integer(forKey: "trSynonymCount")
@@ -138,10 +132,9 @@ final class AppSettings: ObservableObject {
         trAutoHide = bool("trAutoHide", true)
 
         chatSystem = str("chatSystem", AppSettings.defaultChatSystem)
-        clipAction = ClipAction(rawValue: ud.string(forKey: "clipAction") ?? "") ?? .autoSend
-        clipPrompt = str("clipPrompt", AppSettings.defaultClipPrompt)
-        clipPresets = str("clipPresets", AppSettings.defaultClipPresets)
-        clipImagePrompt = str("clipImagePrompt", AppSettings.defaultClipImagePrompt)
+        mindPresets = str("mindPresets", AppSettings.defaultMindPresets)
+        mindDefaultFollowUp = str("mindDefaultFollowUp", AppSettings.defaultMindFollowUp)
+        mindFolder = str("mindFolder", "")
 
         bubbleOpacity = ud.object(forKey: "bubbleOpacity") == nil ? 0.95 : ud.double(forKey: "bubbleOpacity")
     }
@@ -167,21 +160,8 @@ final class AppSettings: ObservableObject {
         trVariantList.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
-    /// 快捷提示词：每行「名称 | 指令」
-    var presetList: [(name: String, prompt: String)] {
-        var out: [(String, String)] = []
-        for raw in clipPresets.split(separator: "\n") {
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty { continue }
-            if let r = line.firstIndex(where: { $0 == "|" || $0 == "｜" }), r != line.startIndex {
-                let name = line[..<r].trimmingCharacters(in: .whitespaces)
-                let prompt = line[line.index(after: r)...].trimmingCharacters(in: .whitespaces)
-                if !name.isEmpty && !prompt.isEmpty { out.append((name, prompt)) }
-            } else {
-                out.append((line.count > 6 ? String(line.prefix(6)) + "…" : line, line))
-            }
-        }
-        return out
+    var mindPresetList: [String] {
+        mindPresets.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
     }
 
     // ---- 悬浮图标位置（图标中心，屏幕坐标） ----

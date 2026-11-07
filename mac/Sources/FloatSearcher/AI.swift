@@ -5,24 +5,26 @@ struct ChatMsg: Identifiable {
     var role: String
     var content: String
     /// 可选的图片（JPEG，base64），只放在用户消息里
-    var image: String? = nil
+    var images: [String] = []
 
-    /// OpenAI 兼容格式：有图片时是「文字 + 图片」数组
+    /// OpenAI 兼容格式：有图片时是「文字 + 图片…」数组
     var openAIContent: Any {
-        guard let img = image else { return content }
-        return [
-            ["type": "text", "text": content] as [String: Any],
-            ["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + img]] as [String: Any],
-        ]
+        if images.isEmpty { return content }
+        var arr: [[String: Any]] = [["type": "text", "text": content]]
+        for img in images {
+            arr.append(["type": "image_url", "image_url": ["url": "data:image/jpeg;base64," + img]])
+        }
+        return arr
     }
 
     /// Claude 格式：图片块在前，文字在后
     var anthropicContent: Any {
-        guard let img = image else { return content }
-        return [
-            ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": img]] as [String: Any],
-            ["type": "text", "text": content] as [String: Any],
-        ]
+        if images.isEmpty { return content }
+        var arr: [[String: Any]] = images.map {
+            ["type": "image", "source": ["type": "base64", "media_type": "image/jpeg", "data": $0]] as [String: Any]
+        }
+        arr.append(["type": "text", "text": content])
+        return arr
     }
 }
 
@@ -90,7 +92,7 @@ enum AI {
         var cfg = cfg0
         if cfg.key.isEmpty { throw AIError("还没填 API Key：点菜单栏里的图标 → 设置。") }
         if cfg.model.isEmpty { throw AIError("还没填模型名：点菜单栏里的图标 → 设置。") }
-        let hasImage = history.contains { $0.image != nil }
+        let hasImage = history.contains { !$0.images.isEmpty }
         // DeepSeek 只有 deepseek-flash 能看图：带图片时自动用它
         if hasImage && cfg.provider == .deepseek { cfg.model = "deepseek-flash" }
         do {
@@ -400,7 +402,7 @@ enum AI {
         let urlStr = cfg.base.hasSuffix("/v1") ? cfg.base + "/messages" : cfg.base + "/v1/messages"
         guard let url = URL(string: urlStr) else { throw AIError("接口地址不对：\(cfg.base)") }
         let msgs: [[String: Any]] = history.map { ["role": $0.role, "content": $0.anthropicContent] }
-        let body: [String: Any] = ["model": cfg.model, "max_tokens": 4096, "stream": true, "system": system, "messages": msgs]
+        let body: [String: Any] = ["model": cfg.model, "max_tokens": 8192, "stream": true, "system": system, "messages": msgs]
         var req = URLRequest(url: url)
         req.httpMethod = "POST"
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
