@@ -242,13 +242,17 @@ enum Mind {
         return t.count > n ? String(t.prefix(n)) + "…" : t
     }
 
-    static func fmtTime(_ ts: Int64) -> String {
-        let d = Date(timeIntervalSince1970: TimeInterval(ts) / 1000)
-        let cal = Calendar.current
+    private static let hmFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "zh_CN")
         f.dateFormat = "HH:mm"
-        let hm = f.string(from: d)
+        return f
+    }()
+
+    static func fmtTime(_ ts: Int64) -> String {
+        let d = Date(timeIntervalSince1970: TimeInterval(ts) / 1000)
+        let cal = Calendar.current
+        let hm = hmFormatter.string(from: d)
         if cal.isDateInToday(d) { return "今天 " + hm }
         if cal.isDateInYesterday(d) { return "昨天 " + hm }
         let c = cal.dateComponents([.year, .month, .day], from: d)
@@ -287,8 +291,15 @@ enum Mind {
     }
 
     static func subtree(_ s: MindSession, _ id: String) -> [String] {
-        var list = [id]
-        for c in children(s, id) { list += subtree(s, c.id) }
+        var list: [String] = []
+        var seen = Set<String>()
+        func walk(_ x: String) {
+            guard !seen.contains(x) else { return }
+            seen.insert(x)
+            list.append(x)
+            for c in children(s, x) { walk(c.id) }
+        }
+        walk(id)
         return list
     }
 
@@ -358,9 +369,10 @@ enum Mind {
         var msgs: [ChatMsg] = []
         var recentImg = Set<String>()
         if let cur = ch.last {
-            var limit = Int64.max
-            if let upto, let m = cur.messages.first(where: { $0.id == upto }) { limit = m.createdAt }
-            for m in cur.messages.reversed() where m.role == "user" && !m.images.isEmpty && m.createdAt <= limit {
+            // 只看 upto 之前的消息（按顺序，不按时间）
+            var before = cur.messages
+            if let upto, let i = cur.messages.firstIndex(where: { $0.id == upto }) { before = Array(cur.messages[..<i]) }
+            for m in before.reversed() where m.role == "user" && !m.images.isEmpty {
                 recentImg.insert(m.id)
                 if recentImg.count >= 2 { break }
             }
@@ -431,8 +443,14 @@ final class MindStore {
         return base.appendingPathComponent("FloatSearcher/对话数据", isDirectory: true)
     }
 
+    /// 设置里的保存位置（快照：打字过程中不跟着变，停下来一会儿才更新）
+    private var configured: String?
+
+    func useFolderSetting(_ v: String) { configured = v }
+
     var folder: URL {
-        let raw = (AppSettings.shared.mindFolder as NSString).expandingTildeInPath
+        let setting = configured ?? AppSettings.shared.mindFolder
+        let raw = (setting as NSString).expandingTildeInPath
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.isEmpty { return MindStore.defaultFolder }
         if raw.hasPrefix("/") { return URL(fileURLWithPath: raw, isDirectory: true).standardizedFileURL }
@@ -466,16 +484,21 @@ final class MindStore {
     func list() -> [MindSession] {
         checkFolder()
         var seen = Set<String>()
+        var byPath: [String: String] = [:]
+        for (id, u) in paths { byPath[u.standardizedFileURL.path] = id }
         let files = (try? FileManager.default.contentsOfDirectory(at: folder, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         for f in files where f.pathExtension.lowercased() == "json" {
             guard let mt = MindStore.mtime(f) else { continue }
-            let known = paths.first(where: { $0.value.standardizedFileURL == f.standardizedFileURL })?.key
-                ?? f.deletingPathExtension().lastPathComponent
-            if let c = cache[known] {
+            let fp = f.standardizedFileURL.path
+            let known = byPath[fp] ?? f.deletingPathExtension().lastPathComponent
+            if let c = cache[known], byPath[fp] != nil || paths[known] == nil {
                 seen.insert(known)
                 if c.mtime == mt || timers[known] != nil || (inUse?(known) ?? false) { continue }
             }
             guard let s = MindStore.read(f), !deleted.contains(s.id) else { continue }
+            // 同步软件留下的冲突副本（同一个 id 的另一个文件）：只认原来那个
+            if let mapped = paths[s.id], mapped.standardizedFileURL.path != fp,
+               FileManager.default.fileExists(atPath: mapped.path) { continue }
             seen.insert(s.id)
             if cache[s.id] != nil && (timers[s.id] != nil || (inUse?(s.id) ?? false)) { continue }
             cache[s.id] = (s, mt)
@@ -604,8 +627,9 @@ final class MindStore {
     func saveImage(_ jpeg: Data, name: String = "粘贴的图片") throws -> MindAttachment {
         try FileManager.default.createDirectory(at: attachDir, withIntermediateDirectories: true)
         let f = DateFormatter()
-        f.dateFormat = "yyyyMMdd"
-        let stamp = f.string(from: Date())
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        let digits = Array("0123456789abcdefghijklmnopqrstuvwxyz")
+        let stamp = f.string(from: Date()) + "-" + String((0..<4).map { _ in digits[Int.random(in: 0..<36)] })
         var base = name
         for ch in ["/", ":", "\\", "#", "^", "[", "]", "|", "?", "*", "\"", "<", ">"] {
             base = base.replacingOccurrences(of: ch, with: " ")

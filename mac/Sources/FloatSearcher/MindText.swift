@@ -188,20 +188,19 @@ enum MindText {
 
 /// 回答用的文本框：可以选中文字（松开鼠标时通知划线追问），高亮可以点
 final class MindTextView: NSTextView {
-    var onSelect: ((String, NSRect) -> Void)?
+    /// 选中了文字：文字 + 松开鼠标的位置（屏幕坐标）
+    var onSelect: ((String, NSPoint) -> Void)?
+    /// 按下鼠标（开始拖选）
+    var onPress: (() -> Void)?
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     override func mouseDown(with event: NSEvent) {
+        onPress?()
         super.mouseDown(with: event) // NSTextView 在这里跟踪拖选，松开鼠标后才返回
         let r = selectedRange()
-        guard r.length > 0, let lm = layoutManager, let tc = textContainer else { return }
-        let text = (string as NSString).substring(with: r)
-        let glyphs = lm.glyphRange(forCharacterRange: r, actualCharacterRange: nil)
-        var rect = lm.boundingRect(forGlyphRange: glyphs, in: tc)
-        rect.origin.x += textContainerOrigin.x
-        rect.origin.y += textContainerOrigin.y
-        onSelect?(text, rect)
+        guard r.length > 0 else { return }
+        onSelect?((string as NSString).substring(with: r), NSEvent.mouseLocation)
     }
 }
 
@@ -210,7 +209,8 @@ struct AnswerText: NSViewRepresentable {
     let anchors: [MindText.Anchor]
     let error: Bool
     let fontSize: CGFloat
-    let onSelect: (String, NSView, NSRect) -> Void
+    let onSelect: (String, NSPoint) -> Void
+    let onPress: () -> Void
     let onAnchor: (String) -> Void
 
     private var signature: String {
@@ -239,10 +239,8 @@ struct AnswerText: NSViewRepresentable {
     func updateNSView(_ tv: MindTextView, context: Context) {
         context.coordinator.parent = self
         let coord = context.coordinator
-        tv.onSelect = { [weak tv, weak coord] s, r in
-            guard let tv, let coord else { return }
-            coord.parent.onSelect(s, tv, r)
-        }
+        tv.onSelect = { [weak coord] s, p in coord?.parent.onSelect(s, p) }
+        tv.onPress = { [weak coord] in coord?.parent.onPress() }
         let sig = signature
         if coord.sig != sig {
             coord.sig = sig
@@ -252,11 +250,20 @@ struct AnswerText: NSViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView tv: MindTextView, context: Context) -> CGSize? {
-        let w = max(proposal.width ?? 480, 40)
+        var w = proposal.width ?? 480
+        if !w.isFinite || w <= 0 { w = tv.bounds.width > 0 ? tv.bounds.width : 480 }
+        w = max(w, 40)
         guard let lm = tv.layoutManager, let tc = tv.textContainer else { return nil }
+        let old = tc.containerSize
         tc.containerSize = NSSize(width: w, height: .greatestFiniteMagnitude)
         lm.ensureLayout(for: tc)
         let h = ceil(lm.usedRect(for: tc).height) + 2
+        // 量完把排版宽度还给当前的实际宽度（SwiftUI 可能用别的宽度来试探）
+        if tv.bounds.width > 0 {
+            tc.containerSize = NSSize(width: tv.bounds.width, height: .greatestFiniteMagnitude)
+        } else if old.width > 0 && old.width.isFinite {
+            tc.containerSize = old
+        }
         return CGSize(width: w, height: max(h, 18))
     }
 

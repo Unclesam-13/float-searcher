@@ -26,6 +26,7 @@ final class Running {
     let node: MindNode
     let msg: MindMsg
     var status: String?
+    var lastSave = Date()
 
     init(s: MindSession, node: MindNode, msg: MindMsg) { self.s = s; self.node = node; self.msg = msg }
 }
@@ -51,7 +52,7 @@ final class BarModel: ObservableObject {
     @Published private(set) var replyAnchor: MindAnchor?
     @Published var pending: [PendingImage] = []
     @Published var sideOpen = false { didSet { if sideOpen != oldValue { onLayout?() } } }
-    @Published var sideTab: SideTab = .tree
+    @Published var sideTab: SideTab = .tree { didSet { if sideTab == .hist { refreshHistory() } } }
     @Published var histQuery = ""
     /// 流式输出时刷新界面用（攒一下再刷，不是每个字都重排）
     @Published private(set) var tick = 0
@@ -62,12 +63,19 @@ final class BarModel: ObservableObject {
 
     var onHide: (() -> Void)?
     var onLayout: (() -> Void)?
+    /// 弹出系统对话框（提示、选文件）前后：激活程序、暂时降低输入窗层级，结束后把输入窗变回前台
+    var onModal: ((() -> Void) -> Void)?
+    /// 让回答文本框交出焦点（输入框才能重新拿到焦点）
+    var onResignAnswer: (() -> Void)?
+    /// 历史列表（缓存，不在每次刷新界面时读磁盘）
+    @Published private(set) var historyAll: [MindSession] = []
 
     private let store = MindStore.shared
     private var running: [String: Running] = [:]
     private var loaded = false
     private var refreshQueued = false
-    private var popover: NSPopover?
+    private var popup: FloatPanel?
+    private var popupMonitors: [Any] = []
     private var selAnchor: MindAnchor?
     private var imgCache: [String: String] = [:]
     private var thumbCache: [String: NSImage] = [:]
@@ -88,12 +96,16 @@ final class BarModel: ObservableObject {
             guard let self else { return false }
             return self.session?.id == id || self.running.values.contains { $0.s.id == id }
         }
-        // 设置里换了保存位置：从新位置重新载入
+        // 设置里换了保存位置：停止打字一会儿后，从新位置重新载入
+        store.useFolderSetting(AppSettings.shared.mindFolder)
         AppSettings.shared.$mindFolder
             .dropFirst()
             .removeDuplicates()
             .debounce(for: .milliseconds(800), scheduler: DispatchQueue.main)
-            .sink { [weak self] _ in self?.folderChanged() }
+            .sink { [weak self] v in
+                self?.store.useFolderSetting(v)
+                self?.folderChanged()
+            }
             .store(in: &bag)
     }
 
@@ -138,6 +150,7 @@ final class BarModel: ObservableObject {
                 requestScroll("bottom")
             }
         }
+        if m == .chat && sideOpen && sideTab == .hist { refreshHistory() }
         closePopover()
     }
 
@@ -152,7 +165,7 @@ final class BarModel: ObservableObject {
 
     /// Esc：先关追问小窗、取消追问，再收起窗口。返回 true 表示已经处理了
     func escape() -> Bool {
-        if let p = popover, p.isShown { p.close(); return true }
+        if popup != nil { closePopover(); focusTick += 1; return true }
         if mode == .chat && replyAnchor != nil { clearReply(); return true }
         return false
     }
@@ -171,6 +184,7 @@ final class BarModel: ObservableObject {
     }
 
     func setStatus(_ t: String?, error: Bool = false) {
+        if status == t && statusError == error { return } // 不重复发通知（流式输出时每个字都会调到这里）
         status = t
         statusError = error
     }
@@ -275,6 +289,17 @@ final class BarModel: ObservableObject {
 
     // ================= AI 对话：提问 =================
 
+    /// 划线后直接回车时问的问题（设置清空了就用默认的）
+    private var defaultFollowUp: String {
+        let t = s.mindDefaultFollowUp.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? AppSettings.defaultMindFollowUp : t
+    }
+
+    /// 用户自己滚动或在回答里拖选：不再自动跟到最下面
+    func stopFollow() { follow = false }
+
+    func refreshHistory() { historyAll = store.list() }
+
     private func refreshSoon() {
         if refreshQueued { return }
         refreshQueued = true
@@ -314,6 +339,7 @@ final class BarModel: ObservableObject {
             store.add(ns)
             session = ns
             nodeId = ns.rootId
+            refreshHistory()
         }
         guard let ss = session else { return }
         if node == nil { nodeId = ss.rootId }
@@ -331,14 +357,14 @@ final class BarModel: ObservableObject {
         child.title = q.isEmpty ? "「\(Mind.truncate(anchor.text, 18))」是什么意思？" : Mind.truncate(q, 40)
         ss.nodes[child.id] = child
         nodeId = child.id
-        ask(ss, child, q.isEmpty ? s.mindDefaultFollowUp : q, images)
+        ask(ss, child, q.isEmpty ? defaultFollowUp : q, images)
         focusTick += 1
     }
 
     private func ask(_ ss: MindSession, _ n: MindNode, _ question: String, _ images: [MindAttachment]?) {
         var q = question
         if q.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            q = images != nil ? "请分析这张图片。" : s.mindDefaultFollowUp
+            q = images != nil ? "请分析这张图片。" : defaultFollowUp
         }
         let um = MindMsg(role: "user", content: q)
         um.attachments = images
@@ -402,6 +428,11 @@ final class BarModel: ObservableObject {
                     am.content = acc.value
                     r?.status = nil
                     self.refreshSoon()
+                    // 每隔几秒存一次写到一半的回答（程序意外退出也不会全丢）
+                    if let r, Date().timeIntervalSince(r.lastSave) > 4 {
+                        r.lastSave = Date()
+                        self.store.save(ss)
+                    }
                     if self.isCurrent(ss, n) { self.setStatus("正在回答…") }
                 }
                 am.content = full.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "（AI 返回为空）" : full
@@ -423,6 +454,7 @@ final class BarModel: ObservableObject {
         am.pending = false
         am.doneAt = Mind.now()
         if ss.nodes[n.id] != nil { store.save(ss, immediate: true) }
+        if sideOpen && sideTab == .hist { refreshHistory() }
         refreshNow()
     }
 
@@ -447,47 +479,66 @@ final class BarModel: ObservableObject {
     /// 重新回答：用这条回答之前的对话重新生成
     func regenerate(_ n: MindNode, _ m: MindMsg) {
         guard let ss = session, running[m.id] == nil else { return }
-        if !anchors(n, m).isEmpty {
-            let a = NSAlert()
-            a.messageText = "重新回答？"
-            a.informativeText = "这条回答下面有划线追问。重新回答后，原来划线的句子可能对不上，高亮会消失（追问本身还在问答树里）。"
-            a.addButton(withTitle: "重新回答")
-            a.addButton(withTitle: "取消")
-            if a.runModal() != .alertFirstButtonReturn { return }
+        if !anchors(n, m).isEmpty &&
+            !confirm("重新回答？", "这条回答下面有划线追问。重新回答后，原来划线的句子可能对不上，高亮会消失（追问本身还在问答树里）。", ok: "重新回答") {
+            return
         }
+        let msgs = Mind.buildThread(ss, n.id, loadImage: { [weak self] a in self?.loadImageB64(a) }, upto: m.id)
         m.content = ""
         m.sources = nil
         m.extra.removeValue(forKey: "editedAt")
         m.extra.removeValue(forKey: "originalContent")
         m.createdAt = Mind.now()
         m.pending = true
-        let msgs = Mind.buildThread(ss, n.id, loadImage: { [weak self] a in self?.loadImageB64(a) }, upto: m.id)
+        follow = true
         run(ss, n, m, msgs)
     }
 
     // ================= 划线追问 =================
 
     /// 回答里选中了一段：弹出追问小窗
-    func selected(_ text: String, in n: MindNode, msg m: MindMsg, view: NSView, rect: NSRect) {
+    /// 回答里选中了一段：在鼠标松开的地方弹出追问小窗（不抢焦点的小面板，第一次点就能点中）
+    func selected(_ text: String, in n: MindNode, msg m: MindMsg, at screenPoint: NSPoint) {
+        follow = false
         guard running[m.id] == nil, n.id == nodeId else { return }
         let t = MindText.cleanSelection(text)
         guard !t.isEmpty else { return }
         selAnchor = MindAnchor(text: t, msgId: m.id)
         closePopover()
-        let p = NSPopover()
-        p.behavior = .transient
-        p.animates = true
-        let vc = NSHostingController(rootView: SelPopView(m: self, presets: s.mindPresetList))
-        vc.sizingOptions = [.preferredContentSize]
-        p.contentViewController = vc
-        popover = p
-        let r = rect.isEmpty ? NSRect(x: 0, y: 0, width: 10, height: 10) : rect
-        p.show(relativeTo: r, of: view, preferredEdge: .maxY)
+
+        let host = FirstMouseHostingView(rootView: AnyView(SelPopView(m: self, presets: s.mindPresetList)))
+        let size = host.fittingSize
+        let p = FloatPanel.make(NSRect(origin: .zero, size: size), canKey: false)
+        p.hasShadow = true
+        p.level = NSWindow.Level(rawValue: NSWindow.Level.floating.rawValue + 1)
+        p.contentView = host
+        // 放在鼠标右下方，放不下就挪进屏幕
+        let vf = (NSScreen.screens.first { $0.frame.contains(screenPoint) } ?? NSScreen.main)?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1440, height: 900)
+        var x = screenPoint.x - 12
+        var y = screenPoint.y - 14 - size.height
+        x = min(max(x, vf.minX + 4), vf.maxX - size.width - 4)
+        if y < vf.minY + 4 { y = screenPoint.y + 14 }
+        y = min(y, vf.maxY - size.height - 4)
+        p.setFrameOrigin(NSPoint(x: x, y: y))
+        p.orderFrontRegardless()
+        popup = p
+
+        // 点到别处（本程序的其他地方或别的 App）就关掉
+        if let local = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] e in
+            if let self, e.window !== self.popup { self.closePopover() }
+            return e
+        }) { popupMonitors.append(local) }
+        if let global = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
+            Task { @MainActor in self?.closePopover() }
+        }) { popupMonitors.append(global) }
     }
 
     func closePopover() {
-        popover?.close()
-        popover = nil
+        for mon in popupMonitors { NSEvent.removeMonitor(mon) }
+        popupMonitors.removeAll()
+        popup?.orderOut(nil)
+        popup = nil
     }
 
     /// 「追问…」：划线原文挂在输入框上方，在输入框里写问题
@@ -509,6 +560,7 @@ final class BarModel: ObservableObject {
     func copySelection() {
         closePopover()
         if let a = selAnchor { copy(a.text) }
+        focusTick += 1
     }
 
     func clearReply() { replyAnchor = nil }
@@ -572,6 +624,7 @@ final class BarModel: ObservableObject {
             loaded = true
             if let latest = store.list().first { session = latest; nodeId = latest.rootId }
         }
+        refreshHistory()
         refreshNow()
     }
 
@@ -593,6 +646,7 @@ final class BarModel: ObservableObject {
         if let tab, !(sideOpen && sideTab == tab) {
             sideTab = tab
             sideOpen = true
+            if tab == .hist { refreshHistory() }
         } else {
             sideOpen = false
         }
@@ -604,7 +658,7 @@ final class BarModel: ObservableObject {
     var pathIds: Set<String> { Set(Mind.chain(session, nodeId).map(\.id)) }
 
     func history() -> (all: Int, shown: [MindSession]) {
-        let all = store.list()
+        let all = historyAll
         let q = histQuery.trimmingCharacters(in: .whitespaces)
         if q.isEmpty { return (all.count, all) }
         let shown = all.filter { ss in
@@ -620,7 +674,14 @@ final class BarModel: ObservableObject {
         a.informativeText = text
         a.addButton(withTitle: ok)
         a.addButton(withTitle: "取消")
-        return a.runModal() == .alertFirstButtonReturn
+        var result = false
+        modal { result = a.runModal() == .alertFirstButtonReturn }
+        return result
+    }
+
+    private func modal(_ body: () -> Void) {
+        if let f = onModal { f(body) } else { body() }
+        focusTick += 1
     }
 
     func deleteNode(_ n: MindNode) {
@@ -642,6 +703,7 @@ final class BarModel: ObservableObject {
         for r in running.values where r.s === ss { r.task?.cancel() }
         store.delete(ss.id)
         if ss === session { session = nil; nodeId = nil; clearReply() }
+        refreshHistory()
         refreshNow()
     }
 
@@ -651,6 +713,15 @@ final class BarModel: ObservableObject {
     func pasteImage() -> Bool {
         guard mode == .chat else { return false }
         let pb = NSPasteboard.general
+        // 访达里拷贝的图片文件（同时带着文件名文字，要先看文件）
+        let files = ClipImage.imageFiles(pb)
+        if !files.isEmpty {
+            for u in files.prefix(BarModel.maxImages) {
+                if let img = NSImage(contentsOf: u) { addPending(img) }
+            }
+            return true
+        }
+        if ClipImage.hasFileURLs(pb) { return false }   // 拷贝的是别的文件：照常粘贴文件名
         if let t = pb.string(forType: .string), !t.isEmpty { return false }
         guard let img = ClipImage.read(pb) else { return false }
         addPending(img)
@@ -673,14 +744,12 @@ final class BarModel: ObservableObject {
         p.canChooseDirectories = false
         p.allowedContentTypes = [.image]
         p.message = "选择要发给 AI 的图片"
-        if #available(macOS 14.0, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
-        if p.runModal() == .OK {
-            for u in p.urls {
-                if let img = NSImage(contentsOf: u) { addPending(img) }
-                else { setStatus("这张图片打不开：\(u.lastPathComponent)", error: true) }
-            }
+        var urls: [URL] = []
+        modal { if p.runModal() == .OK { urls = p.urls } }
+        for u in urls {
+            if let img = NSImage(contentsOf: u) { addPending(img) }
+            else { setStatus("这张图片打不开：\(u.lastPathComponent)", error: true) }
         }
-        focusTick += 1
     }
 
     /// 拖进来的图片文件 / 图片
@@ -688,10 +757,10 @@ final class BarModel: ObservableObject {
         guard mode == .chat else { return false }
         var handled = false
         for p in providers {
-            if p.canLoadObject(ofClass: URL.self) {
+            if p.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
                 handled = true
                 _ = p.loadObject(ofClass: URL.self) { url, _ in
-                    guard let url, let img = NSImage(contentsOf: url) else { return }
+                    guard let url, url.isFileURL, let img = NSImage(contentsOf: url) else { return }
                     Task { @MainActor [weak self] in self?.addPending(img) }
                 }
             } else if p.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
@@ -729,7 +798,8 @@ final class BarModel: ObservableObject {
         guard let data = try? Data(contentsOf: u) else { return nil }
         let ext = u.pathExtension.lowercased()
         var b64: String?
-        if (ext == "jpg" || ext == "jpeg") && data.count < 4_000_000 {
+        let px = NSBitmapImageRep(data: data).map { max($0.pixelsWide, $0.pixelsHigh) } ?? Int.max
+        if (ext == "jpg" || ext == "jpeg") && data.count < 3_500_000 && px <= 1568 {
             b64 = data.base64EncodedString()
         } else if let img = NSImage(data: data), let j = ClipImage.jpeg(img) {
             b64 = j.base64EncodedString()

@@ -36,12 +36,45 @@ final class BarController: NSObject, NSWindowDelegate {
             guard let self else { return }
             if !self.model.escape() { self.hide() }
         }
-        // ⌘V：剪贴板里是图片就当附件
+        // ⌘V：剪贴板里是图片就当附件；其他编辑快捷键直接交给当前焦点（程序没激活时菜单不一定接得到）
         panel.onKeyEquivalent = { [weak self] e in
             guard let self else { return false }
             let flags = e.modifierFlags.intersection(.deviceIndependentFlagsMask)
-            if flags == .command, e.charactersIgnoringModifiers?.lowercased() == "v" { return self.model.pasteImage() }
+            let key = e.charactersIgnoringModifiers?.lowercased() ?? ""
+            if flags == .command && key == "v" && self.model.pasteImage() { return true }
+            var sel: Selector?
+            if flags == .command {
+                switch key {
+                case "c": sel = #selector(NSText.copy(_:))
+                case "x": sel = #selector(NSText.cut(_:))
+                case "v": sel = #selector(NSText.paste(_:))
+                case "a": sel = #selector(NSText.selectAll(_:))
+                case "z": sel = Selector(("undo:"))
+                default: break
+                }
+            } else if flags == [.command, .shift] && key == "z" {
+                sel = Selector(("redo:"))
+            }
+            if let sel { return NSApp.sendAction(sel, to: nil, from: self.panel) }
             return false
+        }
+        // 弹系统对话框：先激活程序、把输入窗层级降下来，结束后再把输入窗放回前台
+        model.onModal = { [weak self] body in
+            guard let self else { body(); return }
+            if #available(macOS 14.0, *) { NSApp.activate() } else { NSApp.activate(ignoringOtherApps: true) }
+            self.panel.level = .normal
+            body()
+            self.panel.level = .floating
+            self.panel.makeKeyAndOrderFront(nil)
+        }
+        model.onResignAnswer = { [weak self] in
+            guard let self else { return }
+            if self.panel.firstResponder is MindTextView { self.panel.makeFirstResponder(nil) }
+        }
+        // 用户自己滚动对话：不再自动跟到最下面
+        NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] e in
+            if let self, e.window === self.panel { self.model.stopFollow() }
+            return e
         }
         model.onHide = { [weak self] in self?.hide() }
         // 换模式、开关侧栏时宽度会变：重新摆位置
@@ -185,7 +218,12 @@ struct BarView: View {
         .fixedSize(horizontal: false, vertical: true)
         .background(GeometryReader { g in Color.clear.preference(key: HeightKey.self, value: g.size.height) })
         .onPreferenceChange(HeightKey.self) { h in m.height = h }
-        .onChange(of: m.focusTick) { _ in focused = true }
+        .onChange(of: m.focusTick) { _ in
+            // 回答文本框可能还拿着焦点：先让它交出来，再给输入框
+            m.onResignAnswer?()
+            focused = false
+            DispatchQueue.main.async { focused = true }
+        }
         .onAppear { DispatchQueue.main.async { focused = true } }
         .onExitCommand { if !m.escape() { m.hide() } }
         .onDrop(of: [.fileURL, .image], isTargeted: nil) { providers in m.drop(providers) }
@@ -401,6 +439,13 @@ struct BarView: View {
                     proxy.scrollTo(id, anchor: id == "bottom" ? .bottom : .top)
                 }
             }
+            .onAppear {
+                // 从中译英切回来、第一次打开时：滚到该看的位置
+                let id = m.scrollReq.id
+                DispatchQueue.main.async {
+                    proxy.scrollTo(id, anchor: id == "bottom" ? .bottom : .top)
+                }
+            }
         }
     }
 
@@ -481,7 +526,8 @@ struct BarView: View {
                            anchors: running ? [] : m.anchors(n, msg),
                            error: msg.content.hasPrefix("❌"),
                            fontSize: BarView.answerFont,
-                           onSelect: { text, view, rect in m.selected(text, in: n, msg: msg, view: view, rect: rect) },
+                           onSelect: { text, point in m.selected(text, in: n, msg: msg, at: point) },
+                           onPress: { m.stopFollow() },
                            onAnchor: { id in Task { @MainActor in m.openNode(id) } })
             }
             if !running {

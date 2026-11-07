@@ -3,6 +3,21 @@ import UniformTypeIdentifiers
 
 /// 读剪贴板 / 文件里的图片，压缩成发给 AI 的 JPEG
 enum ClipImage {
+    /// 在访达里拷贝的图片文件
+    static func imageFiles(_ pb: NSPasteboard) -> [URL] {
+        let opts: [NSPasteboard.ReadingOptionKey: Any] = [
+            .urlReadingFileURLsOnly: true,
+            .urlReadingContentsConformToTypes: [UTType.image.identifier],
+        ]
+        return (pb.readObjects(forClasses: [NSURL.self], options: opts) as? [URL]) ?? []
+    }
+
+    /// 剪贴板里有没有文件（任何类型）
+    static func hasFileURLs(_ pb: NSPasteboard) -> Bool {
+        let urls = pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]
+        return !(urls ?? []).isEmpty
+    }
+
     /// 截图、网页里「拷贝图像」、或者在访达里拷贝的图片文件
     static func read(_ pb: NSPasteboard) -> NSImage? {
         // 访达里拷贝的图片文件
