@@ -151,7 +151,6 @@ final class AppSettings: ObservableObject {
         smSplit = bool("smSplit", true)
         smHint = bool("smHint", false)
         smExtra = str("smExtra", "")
-        if mode == .simplify && !smInFan { mode = .translate }
 
         chatSystem = str("chatSystem", AppSettings.defaultChatSystem)
         mindPresets = str("mindPresets", AppSettings.defaultMindPresets)
@@ -159,6 +158,8 @@ final class AppSettings: ObservableObject {
         mindFolder = str("mindFolder", "")
 
         bubbleOpacity = ud.object(forKey: "bubbleOpacity") == nil ? 0.95 : ud.double(forKey: "bubbleOpacity")
+        // 「中文简化」不在扇形里时，不能停在这个模式上
+        if mode == .simplify && !smInFan { mode = .translate }
     }
 
     // ---- 派生值 ----
