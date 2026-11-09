@@ -123,7 +123,7 @@
 
                 <TextBlock Text="划词助手" FontSize="24" FontWeight="Bold" />
                 <TextBlock Style="{StaticResource Hint}" Margin="0,2,0,14"
-                           Text="鼠标移到悬浮图标上会展开两个选项：中→英、AI 对话。选好后单击图标，旁边会横向弹出输入窗。右键图标可以打开这里或退出。" />
+                           Text="鼠标移到悬浮图标上会展开扇形选项：中→英、中文简化（可在下面关掉）、AI 对话。选好后单击图标，旁边会横向弹出输入窗。右键图标可以打开这里或退出。" />
 
                 <!-- 接口 -->
                 <Border Style="{StaticResource Card}">
@@ -190,6 +190,30 @@
                         <TextBlock Style="{StaticResource Hint}" Text="例如：偏商务场合；尽量用简单词汇；专有名词保留原文。" />
 
                         <CheckBox x:Name="TrAutoHide" Content="点到别处时自动收起输入窗" Margin="0,12,0,0" />
+                    </StackPanel>
+                </Border>
+
+                <!-- 中文简化 -->
+                <Border Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H}" Text="中文简化" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,4"
+                                   Text="有些中文不好直接翻成英文（成语、俗语、网络用语、绕的句子）。输入它按回车，会先给一个最直白的中文说法，再按需给出更简单的同义词、大白话解释、拆开的短句，方便你自己翻成英文。点任意一行复制。" />
+                        <CheckBox x:Name="SmInFan" Content="在悬浮按钮的扇形里显示「中文简化」" FontWeight="SemiBold" />
+
+                        <StackPanel Orientation="Horizontal">
+                            <CheckBox x:Name="SmSyn" Content="给出更简单的同义词，最多" VerticalAlignment="Center" />
+                            <ComboBox x:Name="SmSynCount" Width="56" Margin="8,6,6,0" VerticalAlignment="Center" />
+                            <TextBlock Text="个" VerticalAlignment="Center" Margin="0,6,0,0" />
+                        </StackPanel>
+                        <CheckBox x:Name="SmExplain" Content="用大白话解释意思和使用场合" />
+                        <CheckBox x:Name="SmSplit" Content="句子：拆成几个主谓宾齐全的短句" />
+                        <CheckBox x:Name="SmHint" Content="附上关键词的英文提示（只给关键词，不给整句译文）" />
+
+                        <TextBlock Style="{StaticResource Label}" Text="其他要求（可留空）" />
+                        <TextBox x:Name="SmExtra" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="52"
+                                 VerticalScrollBarVisibility="Auto" />
+                        <TextBlock Style="{StaticResource Hint}" Text="例如：同义词尽量用口语；解释控制在一句话以内；多给几个四字词的白话说法。「点到别处时自动收起输入窗」和中 → 英共用。" />
                     </StackPanel>
                 </Border>
 

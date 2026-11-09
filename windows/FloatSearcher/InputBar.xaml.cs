@@ -106,7 +106,7 @@ namespace FloatSearcher
             _mode = m;
             bool chat = m == Mode.Chat;
 
-            ModeLabel.Text = chat ? "AI 对话" : "中 → 英";
+            ModeLabel.Text = BubbleWindow.Label(m);
             TranslatePanel.Visibility = chat ? Visibility.Collapsed : Visibility.Visible;
             ChatPanel.Visibility = chat ? Visibility.Visible : Visibility.Collapsed;
             var cv = chat ? Visibility.Visible : Visibility.Collapsed;
@@ -145,7 +145,7 @@ namespace FloatSearcher
 
         void HideBar()
         {
-            if (_mode == Mode.Translate && _busy) StopTranslate();
+            if (IsLookup && _busy) StopTranslate();
             MindClosePopup();
             Hide();
         }
@@ -153,7 +153,7 @@ namespace FloatSearcher
         void OnDeactivated()
         {
             // 中译英是「查完就走」：点到别处自动收起（设置里可关）
-            if (IsVisible && _mode == Mode.Translate && App.Settings.TrAutoHide)
+            if (IsVisible && IsLookup && App.Settings.TrAutoHide)
             {
                 _autoHiddenAt = Environment.TickCount64;
                 HideBar();
@@ -210,7 +210,9 @@ namespace FloatSearcher
 
         void UpdatePlaceholder()
         {
-            Placeholder.Text = _mode == Mode.Chat ? MindPlaceholder() : "输入中文，回车翻译成英文";
+            Placeholder.Text = _mode == Mode.Chat ? MindPlaceholder()
+                : _mode == Mode.Simplify ? "输入不好翻的中文，回车拆成简单的同义词和大白话"
+                : "输入中文，回车翻译成英文";
             Placeholder.Visibility = Input.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed;
         }
 
@@ -227,7 +229,7 @@ namespace FloatSearcher
             // 输入法正在拼字时按回车（Key.ImeProcessed）不算发送
             if (e.Key != Key.Enter) return;
             bool shift = (mods & ModifierKeys.Shift) != 0;
-            if (shift && _mode != Mode.Translate) return; // 换行
+            if (shift && !IsLookup) return; // 换行
             e.Handled = true;
             Submit();
         }
@@ -246,7 +248,7 @@ namespace FloatSearcher
         void Submit()
         {
             var text = Input.Text.Trim();
-            if (_mode == Mode.Translate)
+            if (IsLookup)
             {
                 if (text.Length > 0) Translate(text);
             }
@@ -306,6 +308,9 @@ namespace FloatSearcher
             return s.Length > max ? s.Substring(0, max) + "…" : s;
         }
 
+        /// <summary>「查完就走」的模式：中译英、中文简化（共用同一套输入→结果的界面）</summary>
+        bool IsLookup => _mode != Mode.Chat;
+
         /// <summary>只有 DeepSeek 接口能联网</summary>
         static bool WebAvailable => App.Settings.Provider == Providers.DeepSeek;
 
@@ -323,7 +328,8 @@ namespace FloatSearcher
 
         async void Translate(string text)
         {
-            var prompt = Prompts.Translate(App.Settings);
+            bool simplify = _mode == Mode.Simplify;
+            var prompt = simplify ? Prompts.Simplify(App.Settings) : Prompts.Translate(App.Settings);
             var key = prompt + "\u0001" + text;
             int gen = ++_gen;
             if (TrCache.TryGetValue(key, out var cached))
@@ -336,7 +342,7 @@ namespace FloatSearcher
             }
 
             SetBusy(true);
-            SetStatus("翻译中…");
+            SetStatus(simplify ? "正在拆解…" : "翻译中…");
             TranslatePanel.Children.Clear();
             UpdateOutputVisibility();
             var acc = new StringBuilder();
@@ -354,14 +360,14 @@ namespace FloatSearcher
                 if (gen != _gen) return;
                 if (string.IsNullOrWhiteSpace(full))
                 {
-                    SetStatus("没有拿到译文，再按一次回车试试", true);
+                    SetStatus(simplify ? "没有拿到结果，再按一次回车试试" : "没有拿到译文，再按一次回车试试", true);
                 }
                 else
                 {
                     TrCache[key] = full;
                     RenderTranslation(full, done: true);
                 }
-                if (_mode == Mode.Translate) Input.SelectAll(); // 接着打字就是查下一个
+                if (IsLookup) Input.SelectAll(); // 接着打字就是查下一个
             }
             catch (OperationCanceledException) { if (gen == _gen) SetStatus(null); }
             catch (AiException e) { if (gen == _gen) SetStatus(e.Message, true); }
@@ -372,7 +378,7 @@ namespace FloatSearcher
         /// <summary>第一行大字是主译文，后面每行是同义词 / 各种句式；点哪一行就复制哪一行</summary>
         void RenderTranslation(string answer, bool done)
         {
-            if (_mode != Mode.Translate) return;
+            if (!IsLookup) return;
             TranslatePanel.Children.Clear();
             var lines = Prompts.Split(answer);
             for (int i = 0; i < lines.Count; i++)

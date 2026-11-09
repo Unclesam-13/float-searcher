@@ -3,11 +3,12 @@ import ServiceManagement
 
 /// 点悬浮图标时打开哪一种
 enum Mode: String, CaseIterable {
-    case translate, chat
+    case translate, simplify, chat
 
     var title: String {
         switch self {
         case .translate: return "中 → 英"
+        case .simplify: return "中文简化"
         case .chat: return "AI 对话"
         }
     }
@@ -16,6 +17,7 @@ enum Mode: String, CaseIterable {
     var glyph: String {
         switch self {
         case .translate: return "译"
+        case .simplify: return "简"
         case .chat: return "AI"
         }
     }
@@ -23,6 +25,7 @@ enum Mode: String, CaseIterable {
     var hint: String {
         switch self {
         case .translate: return "输入中文，回车出英文"
+        case .simplify: return "输入不好翻的中文，回车拆成简单的同义词和大白话"
         case .chat: return "和 AI 对话：选中回答里的一段可以追问，有历史和问答树；⌘V 粘贴截图"
         }
     }
@@ -82,6 +85,16 @@ final class AppSettings: ObservableObject {
     @Published var trExtra: String { didSet { d.set(trExtra, forKey: "trExtra") } }
     @Published var trAutoHide: Bool { didSet { d.set(trAutoHide, forKey: "trAutoHide") } }
 
+    // ---- 中文简化：把中文换成简单的同义词、大白话，方便自己翻成英文 ----
+    /// 在悬浮按钮的扇形里显示「中文简化」
+    @Published var smInFan: Bool { didSet { d.set(smInFan, forKey: "smInFan") } }
+    @Published var smSynonyms: Bool { didSet { d.set(smSynonyms, forKey: "smSynonyms") } }
+    @Published var smSynonymCount: Int { didSet { d.set(smSynonymCount, forKey: "smSynonymCount") } }
+    @Published var smExplain: Bool { didSet { d.set(smExplain, forKey: "smExplain") } }
+    @Published var smSplit: Bool { didSet { d.set(smSplit, forKey: "smSplit") } }
+    @Published var smHint: Bool { didSet { d.set(smHint, forKey: "smHint") } }
+    @Published var smExtra: String { didSet { d.set(smExtra, forKey: "smExtra") } }
+
     // ---- AI 对话 ----
     @Published var chatSystem: String { didSet { d.set(chatSystem, forKey: "chatSystem") } }
 
@@ -131,6 +144,15 @@ final class AppSettings: ObservableObject {
         trExtra = str("trExtra", "")
         trAutoHide = bool("trAutoHide", true)
 
+        smInFan = bool("smInFan", true)
+        smSynonyms = bool("smSynonyms", true)
+        smSynonymCount = ud.object(forKey: "smSynonymCount") == nil ? 5 : ud.integer(forKey: "smSynonymCount")
+        smExplain = bool("smExplain", true)
+        smSplit = bool("smSplit", true)
+        smHint = bool("smHint", false)
+        smExtra = str("smExtra", "")
+        if mode == .simplify && !smInFan { mode = .translate }
+
         chatSystem = str("chatSystem", AppSettings.defaultChatSystem)
         mindPresets = str("mindPresets", AppSettings.defaultMindPresets)
         mindDefaultFollowUp = str("mindDefaultFollowUp", AppSettings.defaultMindFollowUp)
@@ -150,6 +172,9 @@ final class AppSettings: ObservableObject {
         let m = model.trimmingCharacters(in: .whitespaces)
         return m.isEmpty ? provider.defaultModel : m
     }
+
+    /// 扇形里显示哪些模式（按顺序）
+    var fanModes: [Mode] { smInFan ? [.translate, .simplify, .chat] : [.translate, .chat] }
 
     var hasKey: Bool { !apiKey.trimmingCharacters(in: .whitespaces).isEmpty }
 

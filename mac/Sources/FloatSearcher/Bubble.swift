@@ -220,7 +220,7 @@ final class BubbleController {
             var diff = atan2(dy, dx) - fanDir
             while diff > .pi { diff -= 2 * .pi }
             while diff < -.pi { diff += 2 * .pi }
-            inside = abs(diff) <= (CGFloat(Mode.allCases.count - 1) / 2 * BubbleController.spreadDeg + 34) * .pi / 180
+            inside = abs(diff) <= (CGFloat(AppSettings.shared.fanModes.count - 1) / 2 * BubbleController.spreadDeg + 34) * .pi / 180
         }
         if !inside { inside = fan.pillScreenRects().contains { $0.insetBy(dx: -6, dy: -6).contains(m) } }
         if inside { lastInside = Date() }
@@ -536,8 +536,17 @@ final class FanView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        for m in Mode.allCases {
+        buildPills()
+    }
+
+    /// 扇形里的选项（「中文简化」可以在设置里关掉）
+    private func buildPills() {
+        for p in pills { p.layer.removeFromSuperlayer() }
+        pills.removeAll()
+        let scale = window?.backingScaleFactor ?? 2
+        for m in AppSettings.shared.fanModes {
             let p = Pill(m)
+            p.text.contentsScale = scale
             p.layer.bounds = CGRect(x: 0, y: 0, width: FanView.pillW, height: FanView.pillH)
             p.layer.cornerRadius = FanView.pillH / 2
             p.layer.borderWidth = 1
@@ -602,9 +611,10 @@ final class FanView: NSView {
     func open(direction: CGFloat) {
         let c = CGPoint(x: bounds.midX, y: bounds.midY)
         hovered = nil
+        if pills.map(\.mode) != AppSettings.shared.fanModes { buildPills() }
         refreshStyles()
         for (i, p) in pills.enumerated() {
-            let ang = direction + (CGFloat(i) - CGFloat(Mode.allCases.count - 1) / 2) * BubbleController.spreadDeg * .pi / 180
+            let ang = direction + (CGFloat(i) - CGFloat(pills.count - 1) / 2) * BubbleController.spreadDeg * .pi / 180
             let target = CGPoint(x: c.x + BubbleController.fanRadius * cos(ang),
                                  y: c.y + BubbleController.fanRadius * sin(ang))
             p.frame = CGRect(x: target.x - FanView.pillW / 2, y: target.y - FanView.pillH / 2,

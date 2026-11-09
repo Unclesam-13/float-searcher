@@ -133,7 +133,7 @@ final class BarController: NSObject, NSWindowDelegate {
 
     func windowDidResignKey(_ notification: Notification) {
         // 中译英是「查完就走」：点到别处自动收起（设置里可关）
-        if panel.isVisible && model.mode == .translate && AppSettings.shared.trAutoHide {
+        if panel.isVisible && model.isLookup && AppSettings.shared.trAutoHide {
             autoHiddenAt = Date()
             hide()
         }
@@ -379,7 +379,7 @@ struct BarView: View {
 
     @ViewBuilder
     private var output: some View {
-        if m.mode == .translate {
+        if m.isLookup {
             ScrollView(.vertical) {
                 translation
                     .background(GeometryReader { g in Color.clear.preference(key: ContentHeightKey.self, value: g.size.height) })

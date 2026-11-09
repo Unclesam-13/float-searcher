@@ -119,6 +119,9 @@ final class BarModel: ObservableObject {
         return running.values.contains { $0.s === ss && $0.node === n }
     }
 
+    /// 「查完就走」的模式：中译英、中文简化（共用同一套输入→结果的界面）
+    var isLookup: Bool { mode != .chat }
+
     /// 发送按钮显示成「停止」
     var busy: Bool { mode == .chat ? currentRunning : trBusy }
 
@@ -138,7 +141,7 @@ final class BarModel: ObservableObject {
         if trBusy && m != mode { stopTranslate() }
         mode = m
         setStatus(nil)
-        if m == .translate && changed {
+        if m != .chat && changed {
             input = ""
             trLines = []
         }
@@ -172,6 +175,7 @@ final class BarModel: ObservableObject {
 
     var placeholder: String {
         if mode == .translate { return "输入中文，回车翻译成英文" }
+        if mode == .simplify { return "输入不好翻的中文，回车拆成简单的同义词和大白话" }
         if replyAnchor != nil { return "就划线的内容追问，回车发送（直接回车 = \(Mind.truncate(s.mindDefaultFollowUp, 12))）" }
         if !pending.isEmpty { return "要问这张图什么？回车发送（直接回车 = 分析图片）" }
         guard let n = node else { return "问点什么，回车发送 · ⌘V 粘贴截图" }
@@ -180,7 +184,7 @@ final class BarModel: ObservableObject {
     }
 
     var hasOutput: Bool {
-        mode == .translate ? !trLines.isEmpty : (sideOpen || !(node?.messages.isEmpty ?? true))
+        isLookup ? !trLines.isEmpty : (sideOpen || !(node?.messages.isEmpty ?? true))
     }
 
     func setStatus(_ t: String?, error: Bool = false) {
@@ -193,7 +197,7 @@ final class BarModel: ObservableObject {
 
     func submit() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        if mode == .translate {
+        if isLookup {
             if !text.isEmpty { translate(text) }
         } else {
             mindSubmit(text)
@@ -236,7 +240,8 @@ final class BarModel: ObservableObject {
     }
 
     func translate(_ text: String) {
-        let prompt = Prompts.translate(s)
+        let simplify = mode == .simplify
+        let prompt = simplify ? Prompts.simplify(s) : Prompts.translate(s)
         let key = prompt + "\u{1}" + text
         stopTranslate()
         let myGen = trGen
@@ -246,7 +251,7 @@ final class BarModel: ObservableObject {
             return
         }
         trBusy = true
-        setStatus("翻译中…")
+        setStatus(simplify ? "正在拆解…" : "翻译中…")
         trLines = []
         let acc = Box("")
         trTask = Task { [weak self] in
@@ -261,16 +266,16 @@ final class BarModel: ObservableObject {
                 }
                 guard self.trGen == myGen else { return }
                 if full.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    if self.mode == .translate { self.setStatus("没有拿到译文，再按一次回车试试", error: true) }
+                    if self.isLookup { self.setStatus(simplify ? "没有拿到结果，再按一次回车试试" : "没有拿到译文，再按一次回车试试", error: true) }
                 } else {
                     self.trCache[key] = full
                     self.trLines = Prompts.split(full)
-                    if self.mode == .translate { self.doneTranslating() }
+                    if self.isLookup { self.doneTranslating() }
                 }
             } catch is CancellationError {
-                if self.trGen == myGen && self.mode == .translate { self.setStatus(nil) }
+                if self.trGen == myGen && self.isLookup { self.setStatus(nil) }
             } catch {
-                if self.trGen == myGen && self.mode == .translate { self.setStatus(error.localizedDescription, error: true) }
+                if self.trGen == myGen && self.isLookup { self.setStatus(error.localizedDescription, error: true) }
             }
             if self.trGen == myGen {
                 self.trBusy = false

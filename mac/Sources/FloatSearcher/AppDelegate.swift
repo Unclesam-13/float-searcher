@@ -95,7 +95,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let head = NSMenuItem(title: "悬浮图标单击时打开：", action: nil, keyEquivalent: "")
         head.isEnabled = false
         menu.addItem(head)
-        for m in Mode.allCases {
+        for m in AppSettings.shared.fanModes {
             let it = NSMenuItem(title: "\(m.title)　\(m.hint)", action: #selector(pickMode(_:)), keyEquivalent: "")
             it.target = self
             it.representedObject = m.rawValue

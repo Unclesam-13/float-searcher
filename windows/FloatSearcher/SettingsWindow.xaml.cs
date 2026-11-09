@@ -70,6 +70,14 @@ namespace FloatSearcher
             TrGrammar.IsChecked = s.TrGrammar;
             TrExtra.Text = s.TrExtra;
             TrAutoHide.IsChecked = s.TrAutoHide;
+            SmInFan.IsChecked = s.SmInFan;
+            for (int i = 1; i <= 10; i++) SmSynCount.Items.Add(i.ToString());
+            SmSynCount.SelectedIndex = Math.Max(0, Math.Min(9, s.SmSynonymCount - 1));
+            SmSyn.IsChecked = s.SmSynonyms;
+            SmExplain.IsChecked = s.SmExplain;
+            SmSplit.IsChecked = s.SmSplit;
+            SmHint.IsChecked = s.SmHint;
+            SmExtra.Text = s.SmExtra;
 
             ChatSystem.Text = s.ChatSystem;
 
@@ -130,6 +138,16 @@ namespace FloatSearcher
             s.TrGrammar = TrGrammar.IsChecked == true;
             s.TrExtra = TrExtra.Text.Replace("\r", "").Trim();
             s.TrAutoHide = TrAutoHide.IsChecked == true;
+            bool fanChanged = s.SmInFan != (SmInFan.IsChecked == true);
+            s.SmInFan = SmInFan.IsChecked == true;
+            if (!s.SmInFan && s.Mode == Mode.Simplify) s.Mode = Mode.Translate;
+            s.SmSynonyms = SmSyn.IsChecked == true;
+            s.SmSynonymCount = SmSynCount.SelectedIndex + 1;
+            s.SmExplain = SmExplain.IsChecked == true;
+            s.SmSplit = SmSplit.IsChecked == true;
+            s.SmHint = SmHint.IsChecked == true;
+            s.SmExtra = SmExtra.Text.Replace("\r", "").Trim();
+            if (fanChanged) App.Bubble?.RebuildFan();
 
             if (!string.IsNullOrWhiteSpace(ChatSystem.Text)) s.ChatSystem = ChatSystem.Text.Replace("\r", "").Trim();
 

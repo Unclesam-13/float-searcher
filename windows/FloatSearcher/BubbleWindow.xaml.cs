@@ -185,27 +185,46 @@ namespace FloatSearcher
 
         // ================= 扇形选项 =================
 
-        static readonly (Mode mode, string label)[] Options =
+        /// <summary>扇形里的选项（「中文简化」可以在设置里关掉）</summary>
+        static IEnumerable<(Mode mode, string label)> Options()
         {
-            (Mode.Translate, "中 → 英"),
-            (Mode.Chat, "AI 对话"),
+            foreach (var m in App.Settings.FanModes()) yield return (m, Label(m));
+        }
+
+        public static string Label(Mode m) => m switch
+        {
+            Mode.Translate => "中 → 英",
+            Mode.Simplify => "中文简化",
+            _ => "AI 对话",
         };
 
         public static string Glyph(Mode m) => m switch
         {
             Mode.Translate => "译",
+            Mode.Simplify => "简",
             _ => "AI",
         };
 
         public static string ModeName(Mode m) => m switch
         {
             Mode.Translate => "中译英",
+            Mode.Simplify => "中文简化",
             _ => "AI 对话",
         };
 
+        /// <summary>设置里改了扇形选项：重新生成</summary>
+        public void RebuildFan()
+        {
+            CloseFan();
+            foreach (var it in _items) FanLayer.Children.Remove(it.View);
+            _items.Clear();
+            BuildFan();
+            RefreshMode();
+        }
+
         void BuildFan()
         {
-            foreach (var (mode, label) in Options)
+            foreach (var (mode, label) in Options())
             {
                 var text = new TextBlock
                 {
@@ -236,6 +255,7 @@ namespace FloatSearcher
                     ToolTip = mode switch
                     {
                         Mode.Translate => "输入中文，回车出英文",
+                        Mode.Simplify => "输入不好翻的中文，回车拆成简单的同义词和大白话，方便自己翻成英文",
                         _ => "和 AI 对话：选中回答里的一段可以追问，有历史和问答树；Ctrl+V 粘贴截图",
                     },
                 };
@@ -370,7 +390,7 @@ namespace FloatSearcher
             menu.Items.Add(newChat);
 
             menu.Items.Add(new Separator());
-            foreach (var (mode, label) in Options)
+            foreach (var (mode, label) in Options())
             {
                 var m = mode;
                 var mi = new MenuItem { Header = label, IsCheckable = true, IsChecked = App.Settings.Mode == m };

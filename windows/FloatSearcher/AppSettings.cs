@@ -7,8 +7,8 @@ using Microsoft.Win32;
 
 namespace FloatSearcher
 {
-    /// <summary>两种模式：点悬浮图标时打开哪一种</summary>
-    public enum Mode { Translate, Chat }
+    /// <summary>点悬浮图标时打开哪一种（2 是以前的剪贴板模式，不再使用）</summary>
+    public enum Mode { Translate = 0, Chat = 1, Simplify = 3 }
 
     /// <summary>所有设置，保存在 %APPDATA%\FloatSearcher\settings.json</summary>
     public class AppSettings
@@ -35,6 +35,25 @@ namespace FloatSearcher
         public bool TrExample { get; set; } = false;
         public string TrExtra { get; set; } = "";
         public bool TrAutoHide { get; set; } = true;
+
+        // ---- 中文简化：把中文换成简单的同义词、大白话，方便自己翻成英文 ----
+        /// <summary>在悬浮按钮的扇形里显示「中文简化」</summary>
+        public bool SmInFan { get; set; } = true;
+        public bool SmSynonyms { get; set; } = true;
+        public int SmSynonymCount { get; set; } = 5;
+        public bool SmExplain { get; set; } = true;
+        public bool SmSplit { get; set; } = true;
+        public bool SmHint { get; set; } = false;
+        public string SmExtra { get; set; } = "";
+
+        /// <summary>扇形里显示哪些模式（按顺序）</summary>
+        public List<Mode> FanModes()
+        {
+            var list = new List<Mode> { Mode.Translate };
+            if (SmInFan) list.Add(Mode.Simplify);
+            list.Add(Mode.Chat);
+            return list;
+        }
 
         // ---- AI 对话 ----
         public string ChatSystem { get; set; } =
@@ -76,7 +95,8 @@ namespace FloatSearcher
                     if (s != null)
                     {
                         // 旧版本的「剪贴板」模式已经去掉了：改成 AI 对话
-                        if (s.Mode != Mode.Translate && s.Mode != Mode.Chat) s.Mode = Mode.Chat;
+                        if (s.Mode != Mode.Translate && s.Mode != Mode.Chat && s.Mode != Mode.Simplify) s.Mode = Mode.Chat;
+                        if (s.Mode == Mode.Simplify && !s.SmInFan) s.Mode = Mode.Translate;
                         return s;
                     }
                 }

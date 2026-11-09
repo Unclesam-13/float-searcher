@@ -41,7 +41,7 @@ struct SettingsView: View {
     var body: some View {
         Form {
             Section {
-                Text("鼠标移到悬浮图标上会展开两个选项：中→英、AI 对话。选好后单击图标，旁边会横向弹出输入窗。右键图标或点菜单栏里的图标，可以打开这里或退出。")
+                Text("鼠标移到悬浮图标上会展开扇形选项：中→英、中文简化（可在下面关掉）、AI 对话。选好后单击图标，旁边会横向弹出输入窗。右键图标或点菜单栏里的图标，可以打开这里或退出。")
                     .font(.callout)
                     .foregroundColor(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -112,6 +112,28 @@ struct SettingsView: View {
                 Toggle("点到别处时自动收起输入窗", isOn: $s.trAutoHide)
             }
 
+            Section("中文简化") {
+                Text("有些中文不好直接翻成英文（成语、俗语、网络用语、绕的句子）。输入它按回车，会先给一个最直白的中文说法，再按需给出更简单的同义词、大白话解释、拆开的短句，方便你自己翻成英文。点任意一行复制。")
+                    .font(.caption).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Toggle("在悬浮按钮的扇形里显示「中文简化」", isOn: $s.smInFan)
+                Toggle("给出更简单的同义词", isOn: $s.smSynonyms)
+                if s.smSynonyms {
+                    Stepper("最多 \(s.smSynonymCount) 个", value: $s.smSynonymCount, in: 1...10)
+                }
+                Toggle("用大白话解释意思和使用场合", isOn: $s.smExplain)
+                Toggle("句子：拆成几个主谓宾齐全的短句", isOn: $s.smSplit)
+                Toggle("附上关键词的英文提示（只给关键词，不给整句译文）", isOn: $s.smHint)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("其他要求（可留空），例如：同义词尽量用口语；解释控制在一句话以内。「点到别处时自动收起输入窗」和中 → 英共用。")
+                        .font(.caption).foregroundColor(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    TextEditor(text: $s.smExtra)
+                        .font(.body)
+                        .frame(minHeight: 44)
+                }
+            }
+
             Section("AI 对话") {
                 VStack(alignment: .leading, spacing: 4) {
                     Text("给 AI 的固定说明（每次对话都会带上）").font(.caption).foregroundColor(.secondary)
@@ -171,6 +193,11 @@ struct SettingsView: View {
             BubbleController.shared.refreshMode()
         }
         .onChange(of: s.bubbleOpacity) { _ in BubbleController.shared.refreshMode() }
+        .onChange(of: s.smInFan) { on in
+            // 关掉了而当前正是「中文简化」：换回中 → 英
+            if !on && s.mode == .simplify { s.mode = .translate }
+            BubbleController.shared.refreshMode()
+        }
     }
 
     private var providerHint: String {
