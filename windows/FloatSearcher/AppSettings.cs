@@ -33,6 +33,8 @@ namespace FloatSearcher
         public string TrVariantList { get; set; } = "日常口语\n正式书面\n简洁版";
         public bool TrGrammar { get; set; } = false;
         public bool TrExample { get; set; } = false;
+        /// <summary>英译中时：列出英文单词的所有词性，每个配一个简单例句</summary>
+        public bool TrPosAll { get; set; } = true;
         public string TrExtra { get; set; } = "";
         public bool TrAutoHide { get; set; } = true;
 

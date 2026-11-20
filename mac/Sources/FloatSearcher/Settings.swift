@@ -82,6 +82,8 @@ final class AppSettings: ObservableObject {
     @Published var trVariantList: String { didSet { d.set(trVariantList, forKey: "trVariantList") } }
     @Published var trExample: Bool { didSet { d.set(trExample, forKey: "trExample") } }
     @Published var trGrammar: Bool { didSet { d.set(trGrammar, forKey: "trGrammar") } }
+    /// 英译中时：列出英文单词的所有词性，每个配一个简单例句
+    @Published var trPosAll: Bool { didSet { d.set(trPosAll, forKey: "trPosAll") } }
     @Published var trExtra: String { didSet { d.set(trExtra, forKey: "trExtra") } }
     @Published var trAutoHide: Bool { didSet { d.set(trAutoHide, forKey: "trAutoHide") } }
 
@@ -141,6 +143,7 @@ final class AppSettings: ObservableObject {
         trVariantList = str("trVariantList", "日常口语\n正式书面\n简洁版")
         trExample = bool("trExample", false)
         trGrammar = bool("trGrammar", false)
+        trPosAll = bool("trPosAll", true)
         trExtra = str("trExtra", "")
         trAutoHide = bool("trAutoHide", true)
 

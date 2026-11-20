@@ -183,6 +183,9 @@
 
                         <CheckBox x:Name="TrExample" Content="词语：附一个例句" />
                         <CheckBox x:Name="TrGrammar" Content="附一句语法 / 用法说明" />
+                        <CheckBox x:Name="TrPosAll" Content="英文单词翻成中文时：列出所有词性，每个词性配一个简单例句" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="22,2,0,4"
+                                   Text="比如输入 present，会分别列出【n. 名词】礼物；现在、【v. 动词】呈现；赠送、【adj. 形容词】出席的；目前的，每行带一个短例句。" />
 
                         <TextBlock Style="{StaticResource Label}" Text="其他要求（可留空）" />
                         <TextBox x:Name="TrExtra" AcceptsReturn="True" TextWrapping="Wrap" MinHeight="52"

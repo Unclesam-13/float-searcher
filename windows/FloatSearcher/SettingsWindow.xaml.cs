@@ -68,6 +68,7 @@ namespace FloatSearcher
             TrVarList.Text = s.TrVariantList;
             TrExample.IsChecked = s.TrExample;
             TrGrammar.IsChecked = s.TrGrammar;
+            TrPosAll.IsChecked = s.TrPosAll;
             TrExtra.Text = s.TrExtra;
             TrAutoHide.IsChecked = s.TrAutoHide;
             SmInFan.IsChecked = s.SmInFan;
@@ -136,6 +137,7 @@ namespace FloatSearcher
             s.TrVariantList = TrVarList.Text.Replace("\r", "");
             s.TrExample = TrExample.IsChecked == true;
             s.TrGrammar = TrGrammar.IsChecked == true;
+            s.TrPosAll = TrPosAll.IsChecked == true;
             s.TrExtra = TrExtra.Text.Replace("\r", "").Trim();
             s.TrAutoHide = TrAutoHide.IsChecked == true;
             bool fanChanged = s.SmInFan != (SmInFan.IsChecked == true);

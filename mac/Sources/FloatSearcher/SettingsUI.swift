@@ -101,6 +101,10 @@ struct SettingsView: View {
                 }
                 Toggle("词语：附一个例句", isOn: $s.trExample)
                 Toggle("附一句语法 / 用法说明", isOn: $s.trGrammar)
+                Toggle("英文单词翻成中文时：列出所有词性，每个词性配一个简单例句", isOn: $s.trPosAll)
+                Text("比如输入 present，会分别列出【n. 名词】礼物；现在、【v. 动词】呈现；赠送、【adj. 形容词】出席的；目前的，每行带一个短例句。")
+                    .font(.caption).foregroundColor(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text("其他要求（可留空），例如：偏商务场合；尽量用简单词汇；专有名词保留原文。")
                         .font(.caption).foregroundColor(.secondary)
